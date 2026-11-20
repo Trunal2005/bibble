@@ -1,8 +1,9 @@
 import type { Bibble, LearningMap, MapEdge } from "@/types/map";
 import { createClient } from "@/lib/supabase/client";
+import { ConcurrencyConflictError, saveLocalMapVersioned } from "./concurrency";
 import { getMapExportFilename } from "./export-import";
 
-type MapRow = Pick<LearningMap, "id" | "title" | "description" | "category" | "accent">;
+type MapRow = Pick<LearningMap, "id" | "title" | "description" | "category" | "accent" | "version">;
 type BibbleRow = Omit<Bibble, "position"> & { map_id: string; position_x: number; position_y: number };
 type EdgeRow = Pick<MapEdge, "id"> & { map_id: string; source_id: string; target_id: string };
 
@@ -12,7 +13,7 @@ function isSupabaseConfigured() {
 
 export function mapToRows(map: LearningMap) {
   return {
-    map: { id: map.id, title: map.title, description: map.description, category: map.category, accent: map.accent },
+    map: { id: map.id, title: map.title, description: map.description, category: map.category, accent: map.accent, ...(map.version !== undefined ? { version: map.version } : {}) },
     bibbles: map.bibbles.map((bibble) => ({
       id: bibble.id,
       map_id: map.id,
@@ -36,6 +37,7 @@ export function rowsToMap(map: MapRow, bibbles: BibbleRow[], edges: EdgeRow[]): 
     description: map.description,
     category: map.category,
     accent: map.accent,
+    ...(map.version !== undefined ? { version: map.version } : {}),
     bibbles: bibbles.map(({ id, title, description, status, progress, position_x, position_y, resources, notes }) => ({
       id,
       title,
@@ -50,31 +52,50 @@ export function rowsToMap(map: MapRow, bibbles: BibbleRow[], edges: EdgeRow[]): 
   };
 }
 
-export async function saveMapToSupabase(map: LearningMap): Promise<boolean> {
-  if (!isSupabaseConfigured()) return true;
+export type MapSaveResult =
+  | { status: "saved"; map: LearningMap; storage: "local" | "cloud" }
+  | { status: "conflict" }
+  | { status: "error"; message: string };
+
+export async function saveMapWithVersion(map: LearningMap, storageKey = "bibble-maps"): Promise<MapSaveResult> {
   try {
+    const supabase = isSupabaseConfigured() ? createClient() : null;
+    const auth = supabase ? await supabase.auth.getUser() : null;
+    if (auth?.error && auth.error.name !== "AuthSessionMissingError") {
+      return { status: "error", message: "Your session could not be verified. Your current edits are still in this tab; reconnect and retry." };
+    }
+    const user = auth?.data.user ?? null;
+    if (!supabase || !user) return { status: "saved", map: await saveLocalMapVersioned(map, storageKey), storage: "local" };
+    const rows = mapToRows(map);
+    const { data, error } = await supabase.rpc("save_learning_map_versioned", {
+      p_map: rows.map, p_bibbles: rows.bibbles, p_edges: rows.edges,
+      p_expected_version: map.version ?? null,
+    });
+    if (error?.code === "PT409" || error?.message === "CONCURRENCY_CONFLICT") return { status: "conflict" };
+    if (error || !Number.isSafeInteger(data) || data < 1) {
+      return { status: "error", message: "Cloud save failed. Check the connection and map version migration, then retry." };
+    }
+    return { status: "saved", map: { ...map, version: data }, storage: "cloud" };
+  } catch (error) {
+    if (error instanceof ConcurrencyConflictError) return { status: "conflict" };
+    return { status: "error", message: error instanceof Error ? error.message : "Could not save this map." };
+  }
+}
+
+/** Compatibility helper for callers that do not offer conflict resolution. */
+export async function saveMapToSupabase(map: LearningMap): Promise<boolean> {
+  return (await saveMapWithVersion(map)).status === "saved";
+}
+
+export async function loadLatestMap(id: string, storageKey = "bibble-maps"): Promise<LearningMap | null> {
+  if (isSupabaseConfigured()) {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return true;
-
-    const rows = mapToRows(map);
-    const { error: mapError } = await supabase.from("learning_maps").upsert(rows.map);
-    if (mapError) return false;
-    const { error: bibbleDeleteError } = await supabase.from("map_bibbles").delete().eq("map_id", map.id);
-    const { error: edgeDeleteError } = await supabase.from("map_edges").delete().eq("map_id", map.id);
-    if (bibbleDeleteError || edgeDeleteError) return false;
-    if (rows.bibbles.length) {
-      const { error } = await supabase.from("map_bibbles").insert(rows.bibbles);
-      if (error) return false;
-    }
-    if (rows.edges.length) {
-      const { error } = await supabase.from("map_edges").insert(rows.edges);
-      if (error) return false;
-    }
-    return true;
-  } catch {
-    return false;
+    if (user) return loadMapFromSupabase(id);
   }
+  const maps: LearningMap[] = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
+  const map = maps.find((m) => m.id === id);
+  return map ? { ...map, version: map.version ?? 1 } : null;
 }
 
 export async function deleteMapFromSupabase(id: string): Promise<boolean> {
@@ -95,23 +116,21 @@ export async function loadMapFromSupabase(id: string): Promise<LearningMap | nul
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
-  const { data: map, error } = await supabase.from("learning_maps").select("id,title,description,category,accent").eq("id", id).maybeSingle();
-  if (error || !map) return null;
-  const [{ data: bibbles, error: bibblesError }, { data: edges, error: edgesError }] = await Promise.all([
-    supabase.from("map_bibbles").select("id,map_id,title,description,status,progress,position_x,position_y,resources,notes").eq("map_id", id),
-    supabase.from("map_edges").select("id,map_id,source_id,target_id").eq("map_id", id),
-  ]);
-  if (bibblesError || edgesError) return null;
-  return rowsToMap(map, bibbles ?? [], edges ?? []);
+  const { data, error } = await supabase.from("learning_maps")
+    .select("id,title,description,category,accent,version,map_bibbles(*),map_edges(*)")
+    .eq("id", id).maybeSingle();
+  if (error || !data) return null;
+  return rowsToMap(data, data.map_bibbles as BibbleRow[], data.map_edges as EdgeRow[]);
 }
 
 export async function listMapsFromSupabase(): Promise<LearningMap[]> {
   if (!isSupabaseConfigured()) return [];
   const supabase = createClient();
-  const { data: maps } = await supabase.from("learning_maps").select("id,title,description,category,accent").order("updated_at", { ascending: false });
-  if (!maps) return [];
-  const loaded = await Promise.all(maps.map((map) => loadMapFromSupabase(map.id)));
-  return loaded.filter((map): map is LearningMap => Boolean(map));
+  const { data, error } = await supabase.from("learning_maps")
+    .select("id,title,description,category,accent,version,map_bibbles(*),map_edges(*)")
+    .order("updated_at", { ascending: false });
+  if (error || !data) return [];
+  return data.map((row) => rowsToMap(row, row.map_bibbles as BibbleRow[], row.map_edges as EdgeRow[]));
 }
 
 export async function downloadMapExport(map: LearningMap): Promise<void> {

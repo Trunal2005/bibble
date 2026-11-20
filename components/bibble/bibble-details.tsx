@@ -29,7 +29,7 @@ interface BibbleDetailsProps {
    * Receives the freshly-saved draft so the parent can build
    * an accurate snapshot before React flushes setNodes().
    */
-  onSave?: (draft: Bibble) => void;
+  onSave?: (draft: Bibble) => void | boolean | Promise<void | boolean>;
 }
 
 export function BibbleDetails({ bibble, onClose, onChange, onSave }: BibbleDetailsProps) {
@@ -63,19 +63,22 @@ export function BibbleDetails({ bibble, onClose, onChange, onSave }: BibbleDetai
     setDraft((current) => ({ ...(current ?? committed), ...partial }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (isSaving) return;
     setIsSaving(true);
 
     // One Save Changes = one committed map edit (the parent records the history step).
-    onChange?.(value);
-    onSave?.(value);
-    setDraft(null);
-    setSavedFlash(true);
-    window.setTimeout(() => {
-      setSavedFlash(false);
+    try {
+      onChange?.(value);
+      const saved = await onSave?.(value);
+      if (saved === false) return;
+      // Edits typed during the request remain a new unsaved draft.
+      setDraft((current) => current === draft ? null : current);
+      setSavedFlash(true);
+      window.setTimeout(() => setSavedFlash(false), 1800);
+    } finally {
       setIsSaving(false);
-    }, 1800);
+    }
   };
 
   const setStatus = (status: BibbleStatus) =>

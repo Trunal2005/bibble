@@ -1,33 +1,41 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore, type SetStateAction } from "react";
 
-export function useLocalStorage<T>(key: string, initialValue: T) {
-  const [value, setValue] = useState<T>(initialValue);
-  const [hydrated, setHydrated] = useState(false);
-  const skipWrite = useRef(true);
+export const STORAGE_CHANGE_EVENT = "bibble-storage-change";
+const noopSubscribe = () => () => {};
 
-  useEffect(() => {
-    skipWrite.current = true;
+/** Read the current key directly so a scope change cannot reuse another user's state. */
+export function useLocalStorage<T>(key: string | null, initialValue: T) {
+  const [initial] = useState(() => initialValue);
+  const subscribe = useCallback((notify: () => void) => {
+    window.addEventListener("storage", notify);
+    window.addEventListener(STORAGE_CHANGE_EVENT, notify);
+    return () => {
+      window.removeEventListener("storage", notify);
+      window.removeEventListener(STORAGE_CHANGE_EVENT, notify);
+    };
+  }, []);
+  const read = useCallback(() => {
+    try { return key ? window.localStorage.getItem(key) : null; }
+    catch { return null; }
+  }, [key]);
+  const raw = useSyncExternalStore(subscribe, read, () => null);
+  const hydrated = useSyncExternalStore(noopSubscribe, () => true, () => false);
+  const value = useMemo(() => {
+    try { return raw === null ? initial : JSON.parse(raw) as T; }
+    catch { return initial; }
+  }, [raw, initial]);
+  const setValue = useCallback((update: SetStateAction<T>) => {
+    if (!key) throw new Error("Map storage is not ready.");
+    let current = initial;
     try {
       const stored = window.localStorage.getItem(key);
-      if (stored) window.setTimeout(() => setValue(JSON.parse(stored) as T), 0);
-    } catch {
-      window.localStorage.removeItem(key);
-    } finally {
-      // Queued after the setValue timer above, so `hydrated` only turns true once the stored value is in state.
-      window.setTimeout(() => setHydrated(true), 0);
-    }
-  }, [key]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    if (skipWrite.current) {
-      skipWrite.current = false;
-      return;
-    }
-    window.localStorage.setItem(key, JSON.stringify(value));
-  }, [hydrated, key, value]);
-
-  return [value, setValue, hydrated] as const;
+      if (stored !== null) current = JSON.parse(stored) as T;
+    } catch { /* Replace malformed data only on an explicit write. */ }
+    const next = update instanceof Function ? update(current) : update;
+    window.localStorage.setItem(key, JSON.stringify(next));
+    window.dispatchEvent(new Event(STORAGE_CHANGE_EVENT));
+  }, [key, initial]);
+  return [value, setValue, hydrated && key !== null] as const;
 }
