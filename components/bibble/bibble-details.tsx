@@ -2,7 +2,7 @@
 
 import type { Bibble, BibbleStatus } from "@/types/map";
 import { statusLabels } from "@/types/map";
-import { BookOpen, Check, Circle, ExternalLink, Link2, Plus, Sparkles, X } from "lucide-react";
+import { ArrowRight, BookOpen, Check, Circle, ExternalLink, Link2, Lock, Plus, Sparkles, X } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
@@ -19,6 +19,13 @@ function safeProgress(raw: unknown): number {
   return Math.min(100, Math.max(0, Math.round(n)));
 }
 
+export interface RelatedConcept {
+  id: string;
+  title: string;
+  status: BibbleStatus;
+  progress: number;
+}
+
 interface BibbleDetailsProps {
   bibble: Bibble;
   onClose: () => void;
@@ -30,9 +37,23 @@ interface BibbleDetailsProps {
    * an accurate snapshot before React flushes setNodes().
    */
   onSave?: (draft: Bibble) => void | boolean | Promise<void | boolean>;
+  /** Direct prerequisites of this bibble */
+  prerequisites?: RelatedConcept[];
+  /** Direct dependent concepts that unlock after this bibble */
+  dependents?: RelatedConcept[];
+  /** Callback to focus/select another concept */
+  onSelectNode?: (nodeId: string) => void;
 }
 
-export function BibbleDetails({ bibble, onClose, onChange, onSave }: BibbleDetailsProps) {
+export function BibbleDetails({
+  bibble,
+  onClose,
+  onChange,
+  onSave,
+  prerequisites = [],
+  dependents = [],
+  onSelectNode,
+}: BibbleDetailsProps) {
   // Unsaved draft, isolated from the roadmap until the user clicks Save Changes.
   // While clean the panel mirrors the committed bibble, so undo/redo shows up here too.
   const [draft, setDraft] = useState<Bibble | null>(null);
@@ -141,6 +162,67 @@ export function BibbleDetails({ bibble, onClose, onChange, onSave }: BibbleDetai
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="details-section">
+          <div className="details-section-title">
+            <span className="field-label">Prerequisites</span>
+          </div>
+          {prerequisites.length > 0 ? (
+            <div className="dependency-list" role="list" aria-label="Prerequisites">
+              {prerequisites.map((prereq) => {
+                const isDone = prereq.status === "completed" || prereq.progress >= 100;
+                return (
+                  <button
+                    key={prereq.id}
+                    type="button"
+                    className="dependency-pill"
+                    onClick={() => onSelectNode?.(prereq.id)}
+                    title={`Jump to ${prereq.title}`}
+                  >
+                    <div className="dependency-pill-main">
+                      {isDone ? (
+                        <Check size={13} style={{ color: "var(--status-live, #10b981)", flexShrink: 0 }} />
+                      ) : (
+                        <Lock size={13} style={{ color: "var(--muted)", flexShrink: 0 }} />
+                      )}
+                      <span className="dependency-name">{prereq.title}</span>
+                    </div>
+                    <span className="dependency-metric">{prereq.progress}%</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="empty-detail">Starting concept · No prerequisites needed</p>
+          )}
+        </div>
+
+        <div className="details-section">
+          <div className="details-section-title">
+            <span className="field-label">Unlocks next</span>
+          </div>
+          {dependents.length > 0 ? (
+            <div className="dependency-list" role="list" aria-label="Unlocked concepts">
+              {dependents.map((dep) => (
+                <button
+                  key={dep.id}
+                  type="button"
+                  className="dependency-pill"
+                  onClick={() => onSelectNode?.(dep.id)}
+                  title={`Jump to ${dep.title}`}
+                >
+                  <div className="dependency-pill-main">
+                    <ArrowRight size={13} style={{ color: "var(--primary)", flexShrink: 0 }} />
+                    <span className="dependency-name">{dep.title}</span>
+                  </div>
+                  <span className="dependency-metric">{dep.progress}%</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="empty-detail">Milestone concept · Leads to roadmap mastery</p>
+          )}
         </div>
 
         <div className="details-section">
