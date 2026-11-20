@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { mapToRows, rowsToMap } from "./persistence";
+import { mapToRows, rowsToMap, saveMapToSupabase } from "./persistence";
 import type { LearningMap } from "@/types/map";
 
 const map: LearningMap = {
@@ -33,6 +33,24 @@ const map: LearningMap = {
   ],
   edges: [{ id: "e-1", source: "b-1", target: "b-2" }],
 };
+
+const client = vi.hoisted(() => ({ auth: { getUser: vi.fn() }, from: vi.fn() }));
+vi.mock("@/lib/supabase/client", () => ({ createClient: () => client }));
+afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
+
+describe("migration authentication confirmation", () => {
+  it("does not acknowledge an upload when cloud persistence is unconfigured", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
+    expect(await saveMapToSupabase(map, "account-a")).toBe(false);
+  });
+  it.each([null, { id: "account-b" }])("rejects a missing or different account: %j", async (user) => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "test-key");
+    client.auth.getUser.mockResolvedValue({ data: { user } });
+    expect(await saveMapToSupabase(map, "account-a")).toBe(false);
+    expect(client.from).not.toHaveBeenCalled();
+  });
+});
 
 describe("map persistence mapping", () => {
   it("stores nested bibble positions and ownership-free rows", () => {

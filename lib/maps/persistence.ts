@@ -2,7 +2,7 @@ import type { Bibble, LearningMap, MapEdge } from "@/types/map";
 import { createClient } from "@/lib/supabase/client";
 import { getMapExportFilename } from "./export-import";
 
-type MapRow = Pick<LearningMap, "id" | "title" | "description" | "category" | "accent">;
+type MapRow = Pick<LearningMap, "id" | "title" | "description" | "category" | "accent"> & { updated_at?: string };
 type BibbleRow = Omit<Bibble, "position"> & { map_id: string; position_x: number; position_y: number };
 type EdgeRow = Pick<MapEdge, "id"> & { map_id: string; source_id: string; target_id: string };
 
@@ -36,6 +36,7 @@ export function rowsToMap(map: MapRow, bibbles: BibbleRow[], edges: EdgeRow[]): 
     description: map.description,
     category: map.category,
     accent: map.accent,
+    ...(map.updated_at ? { updatedAt: map.updated_at } : {}),
     bibbles: bibbles.map(({ id, title, description, status, progress, position_x, position_y, resources, notes }) => ({
       id,
       title,
@@ -50,11 +51,12 @@ export function rowsToMap(map: MapRow, bibbles: BibbleRow[], edges: EdgeRow[]): 
   };
 }
 
-export async function saveMapToSupabase(map: LearningMap): Promise<boolean> {
-  if (!isSupabaseConfigured()) return true;
+export async function saveMapToSupabase(map: LearningMap, expectedUserId?: string): Promise<boolean> {
+  if (!isSupabaseConfigured()) return !expectedUserId;
   try {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
+    if (expectedUserId && user?.id !== expectedUserId) return false;
     if (!user) return true;
 
     const rows = mapToRows(map);
@@ -95,7 +97,7 @@ export async function loadMapFromSupabase(id: string): Promise<LearningMap | nul
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
-  const { data: map, error } = await supabase.from("learning_maps").select("id,title,description,category,accent").eq("id", id).maybeSingle();
+  const { data: map, error } = await supabase.from("learning_maps").select("id,title,description,category,accent,updated_at").eq("id", id).maybeSingle();
   if (error || !map) return null;
   const [{ data: bibbles, error: bibblesError }, { data: edges, error: edgesError }] = await Promise.all([
     supabase.from("map_bibbles").select("id,map_id,title,description,status,progress,position_x,position_y,resources,notes").eq("map_id", id),
@@ -108,7 +110,7 @@ export async function loadMapFromSupabase(id: string): Promise<LearningMap | nul
 export async function listMapsFromSupabase(): Promise<LearningMap[]> {
   if (!isSupabaseConfigured()) return [];
   const supabase = createClient();
-  const { data: maps } = await supabase.from("learning_maps").select("id,title,description,category,accent").order("updated_at", { ascending: false });
+  const { data: maps } = await supabase.from("learning_maps").select("id,title,description,category,accent,updated_at").order("updated_at", { ascending: false });
   if (!maps) return [];
   const loaded = await Promise.all(maps.map((map) => loadMapFromSupabase(map.id)));
   return loaded.filter((map): map is LearningMap => Boolean(map));

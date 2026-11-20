@@ -1,81 +1,70 @@
 import type { LearningMap } from "@/types/map";
 import { saveMapToSupabase } from "@/lib/maps/persistence";
 import { sampleMaps } from "@/data/sample-maps";
+import { validateMapData } from "./export-import";
 
 export const BASE_STORAGE_KEY_MAPS = "bibble-maps";
 export const BASE_STORAGE_KEY_DELETED = "bibble-deleted-maps";
+const CHANGE_EVENT = "bibble-storage-change";
 
-/**
- * Returns a user-scoped localStorage key.
- * If userId is provided, returns `${baseKey}:${userId}`.
- * If userId is null/undefined/empty, returns `${baseKey}:guest`.
- */
 export function getUserScopedKey(baseKey: string, userId?: string | null): string {
-  if (userId && typeof userId === "string" && userId.trim().length > 0) {
-    return `${baseKey}:${userId.trim()}`;
-  }
-  return `${baseKey}:guest`;
+  return `${baseKey}:${userId?.trim() || "guest"}`;
 }
 
-/**
- * Reads stored maps for a specific user scope, with backwards-compatible
- * migration from legacy un-scoped key if needed.
- */
+function readMaps(key: string): LearningMap[] {
+  const raw = window.localStorage.getItem(key);
+  if (!raw) return [];
+  const data: unknown = JSON.parse(raw);
+  if (!Array.isArray(data) || data.some((map) => !validateMapData(map).success)) {
+    throw new Error("Stored map data is invalid; the original data has been preserved.");
+  }
+  return data;
+}
+
 export function getStoredMapsForScope(userId?: string | null): LearningMap[] {
   if (typeof window === "undefined") return [];
-  const scopedKey = getUserScopedKey(BASE_STORAGE_KEY_MAPS, userId);
-  try {
-    const raw = window.localStorage.getItem(scopedKey);
-    if (raw) {
-      return JSON.parse(raw) as LearningMap[];
-    }
-
-    // Backwards compatibility: Check legacy un-scoped key for guest
-    if (!userId) {
-      const legacyRaw = window.localStorage.getItem(BASE_STORAGE_KEY_MAPS);
-      if (legacyRaw) {
-        const legacyMaps = JSON.parse(legacyRaw) as LearningMap[];
-        window.localStorage.setItem(scopedKey, legacyRaw);
-        return legacyMaps;
-      }
-    }
-    return [];
-  } catch {
-    return [];
+  const key = getUserScopedKey(BASE_STORAGE_KEY_MAPS, userId);
+  const scoped = readMaps(key);
+  // Legacy records are claimed once by the guest workspace, never a private account.
+  if (!userId && window.localStorage.getItem(BASE_STORAGE_KEY_MAPS)) {
+    const legacy = readMaps(BASE_STORAGE_KEY_MAPS);
+    const merged = [...scoped, ...legacy.filter((m) => !scoped.some((s) => s.id === m.id))];
+    setStoredMapsForScope(merged, null);
+    window.localStorage.removeItem(BASE_STORAGE_KEY_MAPS);
+    return merged;
   }
+  return scoped;
 }
 
-/**
- * Writes stored maps for a specific user scope.
- */
 export function setStoredMapsForScope(maps: LearningMap[], userId?: string | null): void {
   if (typeof window === "undefined") return;
-  const scopedKey = getUserScopedKey(BASE_STORAGE_KEY_MAPS, userId);
-  try {
-    window.localStorage.setItem(scopedKey, JSON.stringify(maps));
-  } catch {
-    // Ignore storage write errors (e.g. quota exceeded)
-  }
+  window.localStorage.setItem(getUserScopedKey(BASE_STORAGE_KEY_MAPS, userId), JSON.stringify(maps));
+  window.dispatchEvent?.(new Event(CHANGE_EVENT));
 }
 
-/**
- * Reconciles local and remote maps into a single consistent list.
- * Deduplicates by ID, giving precedence to remote updates while preserving unique local maps.
- */
-export function reconcileLocalAndRemoteMaps(
-  localMaps: LearningMap[],
-  remoteMaps: LearningMap[]
-): LearningMap[] {
-  const result: LearningMap[] = [...remoteMaps];
-  const remoteIds = new Set(remoteMaps.map((m) => m.id));
-
-  for (const local of localMaps) {
-    if (!remoteIds.has(local.id)) {
-      result.push(local);
+/** Prefer a newer timestamp only when both sides have trustworthy timestamps. */
+export function reconcileLocalAndRemoteMaps(localMaps: LearningMap[], remoteMaps: LearningMap[]): LearningMap[] {
+  const maps = new Map(localMaps.map((m) => [m.id, m]));
+  for (const remote of remoteMaps) {
+    const local = maps.get(remote.id);
+    const localTime = Date.parse(local?.updatedAt ?? "");
+    const remoteTime = Date.parse(remote.updatedAt ?? "");
+    if (!local || !Number.isFinite(localTime) || !Number.isFinite(remoteTime) || localTime <= remoteTime) {
+      maps.set(remote.id, remote);
     }
   }
+  return [...maps.values()];
+}
 
-  return result;
+/** Global database primary keys require fresh map, node, and edge identities. */
+export function copyMapForMigration(map: LearningMap, id = `map-${crypto.randomUUID()}`): LearningMap {
+  const ids = new Map(map.bibbles.map((b, index) => [b.id, `${id}-b-${index}`]));
+  return {
+    ...map,
+    id,
+    bibbles: map.bibbles.map((b) => ({ ...b, id: ids.get(b.id)!, position: { ...b.position }, resources: b.resources?.map((r) => ({ ...r })) })),
+    edges: map.edges.map((e, index) => ({ id: `${id}-e-${index}`, source: ids.get(e.source)!, target: ids.get(e.target)! })),
+  };
 }
 
 export interface MigrationResult {
@@ -85,119 +74,47 @@ export interface MigrationResult {
   errors: string[];
 }
 
-/**
- * Migrates guest maps (from `bibble-maps:guest` and legacy `bibble-maps`)
- * to the authenticated Supabase user account.
- * Automatically saves each map to Supabase and copies to user's scoped local storage.
- * Only migrates user-created or customized maps (skips unmodified sample maps).
- */
-export async function migrateGuestMapsToAccount(
-  userId: string,
-  options: { clearGuestStorage?: boolean } = { clearGuestStorage: true }
-): Promise<MigrationResult> {
-  if (typeof window === "undefined" || !userId) {
-    return { migratedCount: 0, migratedIds: [], failedIds: [], errors: [] };
-  }
+const pending = new Map<string, Promise<MigrationResult>>();
 
-  // 1. Gather candidate guest maps from scoped guest storage and legacy storage
-  const guestMaps = getStoredMapsForScope(null);
-  let legacyMaps: LearningMap[] = [];
-  try {
-    const legacyRaw = window.localStorage.getItem(BASE_STORAGE_KEY_MAPS);
-    if (legacyRaw) {
-      legacyMaps = JSON.parse(legacyRaw) as LearningMap[];
-    }
-  } catch {
-    legacyMaps = [];
-  }
-
-  // Combine and deduplicate candidate maps by ID
-  const candidateMapById = new Map<string, LearningMap>();
-  for (const map of [...legacyMaps, ...guestMaps]) {
-    if (map && map.id) {
-      candidateMapById.set(map.id, map);
-    }
-  }
-
-  const sampleIds = new Set(sampleMaps.map((s) => s.id));
-  // Filter out untouched sample maps
-  const mapsToMigrate = Array.from(candidateMapById.values()).filter((map) => {
-    if (!sampleIds.has(map.id)) return true;
-    const original = sampleMaps.find((s) => s.id === map.id);
-    if (!original) return true;
-    return (
-      original.title !== map.title ||
-      original.description !== map.description ||
-      original.bibbles.length !== map.bibbles.length ||
-      JSON.stringify(original.bibbles) !== JSON.stringify(map.bibbles)
-    );
-  });
-
-  if (mapsToMigrate.length === 0) {
-    return { migratedCount: 0, migratedIds: [], failedIds: [], errors: [] };
-  }
-
-  const migratedIds: string[] = [];
-  const failedIds: string[] = [];
-  const errors: string[] = [];
-
-  // Read existing user-scoped local maps
-  const userMaps = getStoredMapsForScope(userId);
-  const userMapIds = new Set(userMaps.map((m) => m.id));
-
-  for (const map of mapsToMigrate) {
-    try {
-      const success = await saveMapToSupabase(map);
-      if (success) {
-        migratedIds.push(map.id);
-        if (!userMapIds.has(map.id)) {
-          userMaps.push(map);
-          userMapIds.add(map.id);
-        }
-      } else {
-        failedIds.push(map.id);
-        errors.push(`Failed to persist map "${map.title}" (${map.id}) to Supabase.`);
-      }
-    } catch (err) {
-      failedIds.push(map.id);
-      errors.push(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  // Update authenticated user's scoped storage with migrated maps
-  if (migratedIds.length > 0) {
-    setStoredMapsForScope(userMaps, userId);
-  }
-
-  // Clean up successfully migrated maps from guest storage
-  if (options.clearGuestStorage && migratedIds.length > 0) {
-    const migratedSet = new Set(migratedIds);
-    const remainingGuestMaps = guestMaps.filter((m) => !migratedSet.has(m.id));
-    setStoredMapsForScope(remainingGuestMaps, null);
-
-    // Also update or remove legacy storage key
-    if (remainingGuestMaps.length === 0) {
-      window.localStorage.removeItem(BASE_STORAGE_KEY_MAPS);
-    } else {
-      window.localStorage.setItem(BASE_STORAGE_KEY_MAPS, JSON.stringify(remainingGuestMaps));
-    }
-  }
-
-  return {
-    migratedCount: migratedIds.length,
-    migratedIds,
-    failedIds,
-    errors,
-  };
+export function migrateGuestMapsToAccount(userId: string): Promise<MigrationResult> {
+  const existing = pending.get(userId);
+  if (existing) return existing;
+  const operation = migrate(userId).finally(() => { pending.delete(userId); });
+  pending.set(userId, operation);
+  return operation;
 }
 
-/**
- * Cleanly resets user-specific cached maps or guest storage on session teardown.
- */
+async function migrate(userId: string): Promise<MigrationResult> {
+  const result: MigrationResult = { migratedCount: 0, migratedIds: [], failedIds: [], errors: [] };
+  if (typeof window === "undefined" || !userId.trim()) return result;
+  const candidates = getStoredMapsForScope(null).filter((map) => {
+    const sample = sampleMaps.find((s) => s.id === map.id);
+    return !sample || JSON.stringify(sample) !== JSON.stringify(map);
+  });
+  for (const map of candidates) {
+    try {
+      const copy = copyMapForMigration(map);
+      if (!await saveMapToSupabase(copy, userId)) throw new Error(`Could not sync "${map.title}".`);
+      // Re-read after awaiting so concurrent cache writes are preserved.
+      const userMaps = getStoredMapsForScope(userId);
+      setStoredMapsForScope([...userMaps, copy], userId);
+      const guests = getStoredMapsForScope(null);
+      // An edit made during upload must remain available for another sync.
+      setStoredMapsForScope(guests.filter((m) => m.id !== map.id || JSON.stringify(m) !== JSON.stringify(map)), null);
+      result.migratedIds.push(map.id);
+    } catch (error) {
+      result.failedIds.push(map.id);
+      result.errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  result.migratedCount = result.migratedIds.length;
+  return result;
+}
+
+/** Explicit cache removal; logout instead isolates and preserves offline private edits. */
 export function clearUserScopedStorage(userId?: string | null): void {
   if (typeof window === "undefined") return;
-  const mapKey = getUserScopedKey(BASE_STORAGE_KEY_MAPS, userId);
-  const deletedKey = getUserScopedKey(BASE_STORAGE_KEY_DELETED, userId);
-  window.localStorage.removeItem(mapKey);
-  window.localStorage.removeItem(deletedKey);
+  window.localStorage.removeItem(getUserScopedKey(BASE_STORAGE_KEY_MAPS, userId));
+  window.localStorage.removeItem(getUserScopedKey(BASE_STORAGE_KEY_DELETED, userId));
+  window.dispatchEvent?.(new Event(CHANGE_EVENT));
 }

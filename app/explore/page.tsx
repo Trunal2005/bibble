@@ -4,61 +4,25 @@ import { MapCard } from "@/components/explore/map-card";
 import { SiteHeader } from "@/components/site-header";
 import { categories } from "@/data/categories";
 import { sampleMaps } from "@/data/sample-maps";
-import { useLocalStorage } from "@/hooks/use-local-storage";
+import { useMapSession, useMapStorage } from "@/components/auth/map-session-provider";
 import type { LearningMap } from "@/types/map";
 import { deleteMapFromSupabase, listMapsFromSupabase } from "@/lib/maps/persistence";
-import {
-  BASE_STORAGE_KEY_DELETED,
-  BASE_STORAGE_KEY_MAPS,
-  getUserScopedKey,
-  migrateGuestMapsToAccount,
-} from "@/lib/maps/sync";
+import { reconcileLocalAndRemoteMaps } from "@/lib/maps/sync";
 import { Search, SlidersHorizontal, Star } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 export default function ExplorePage() {
+  const userId = useMapSession();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All maps");
-  const [userId, setUserId] = useState<string | null>(null);
-  const [syncToast, setSyncToast] = useState<string | null>(null);
-
-  const storageKey = getUserScopedKey(BASE_STORAGE_KEY_MAPS, userId);
-  const deletedKey = getUserScopedKey(BASE_STORAGE_KEY_DELETED, userId);
-
-  // Read user-saved/custom maps and the IDs of system maps the user removed.
-  const [storedMaps, setStoredMaps] = useLocalStorage<LearningMap[]>(storageKey, []);
-  const [deletedMapIds, setDeletedMapIds] = useLocalStorage<string[]>(deletedKey, []);
+  const [storedMaps, setStoredMaps] = useMapStorage<LearningMap[]>("bibble-maps", []);
+  const [deletedMapIds, setDeletedMapIds] = useMapStorage<string[]>("bibble-deleted-maps", []);
   const [remoteMaps, setRemoteMaps] = useState<LearningMap[]>([]);
 
   useEffect(() => {
-    let isMounted = true;
-    fetch("/api/auth/me", { cache: "no-store" })
-      .then((res) => res.json())
-      .then(async (data: { user: { id: string } | null }) => {
-        if (!isMounted) return;
-        const currentUid = data?.user?.id ?? null;
-        setUserId(currentUid);
-
-        if (currentUid) {
-          const result = await migrateGuestMapsToAccount(currentUid);
-          if (isMounted && result.migratedCount > 0) {
-            setSyncToast(`Synced ${result.migratedCount} offline map${result.migratedCount > 1 ? "s" : ""} to your account! 🍓`);
-            window.setTimeout(() => setSyncToast(null), 5000);
-          }
-        }
-      })
-      .catch(() => {
-        if (isMounted) setUserId(null);
-      })
-      .finally(() => {
-        if (isMounted) {
-          listMapsFromSupabase().then(setRemoteMaps).catch(() => setRemoteMaps([]));
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
+    let active = true;
+    listMapsFromSupabase().then((maps) => { if (active) setRemoteMaps(maps); }).catch(() => {});
+    return () => { active = false; };
   }, []);
 
   // Merge: stored maps override matching sample maps, user-created maps are appended,
@@ -76,13 +40,8 @@ export default function ExplorePage() {
         merged.push(stored);
       }
     }
-    for (const remote of remoteMaps) {
-      if (deletedMapIds.includes(remote.id)) continue;
-      const existingIndex = merged.findIndex((map) => map.id === remote.id);
-      if (existingIndex >= 0) merged[existingIndex] = remote;
-      else merged.push(remote);
-    }
-    return merged;
+    return reconcileLocalAndRemoteMaps(merged, remoteMaps)
+      .filter((map) => !deletedMapIds.includes(map.id));
   }, [storedMaps, deletedMapIds, remoteMaps]);
 
   const maps = useMemo(
@@ -111,16 +70,12 @@ export default function ExplorePage() {
   return (
     <main className="app-page">
       <SiteHeader />
-      {syncToast && (
-        <aside className="cozy-toast" role="status" aria-live="polite">
-          <p>{syncToast}</p>
-        </aside>
-      )}
       <section className="page-intro">
         <div>
           <span className="eyebrow"><Star size={14} /> Small worlds of knowledge</span>
           <h1>Find a map that feels like yours.</h1>
           <p>Browse a few learning worlds made for wandering, connecting, and coming back to.</p>
+          <p>{userId ? "Your account workspace · Private offline maps stay with this account." : "Guest workspace · Your maps are saved on this device and sync when you sign in."}</p>
         </div>
         <div className="explore-stats"><strong>{allMaps.length}</strong><span>maps<br />to explore</span></div>
       </section>
