@@ -20,6 +20,8 @@ export interface Bibble {
   position: MapPosition;
   resources?: MapResource[];
   notes?: string;
+  readinessState?: "completed" | "in-progress" | "root" | "ready" | "locked";
+  missingPrereqsCount?: number;
 }
 
 export type BibbleNodeData = Bibble & Record<string, unknown>;
