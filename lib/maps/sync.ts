@@ -60,8 +60,7 @@ export function reconcileLocalAndRemoteMaps(localMaps: LearningMap[], remoteMaps
 export function copyMapForMigration(map: LearningMap, id = `map-${crypto.randomUUID()}`): LearningMap {
   const ids = new Map(map.bibbles.map((b, index) => [b.id, `${id}-b-${index}`]));
   return {
-    ...map,
-    id,
+    id, title: map.title, description: map.description, category: map.category, accent: map.accent, updatedAt: map.updatedAt,
     bibbles: map.bibbles.map((b) => ({ ...b, id: ids.get(b.id)!, position: { ...b.position }, resources: b.resources?.map((r) => ({ ...r })) })),
     edges: map.edges.map((e, index) => ({ id: `${id}-e-${index}`, source: ids.get(e.source)!, target: ids.get(e.target)! })),
   };

@@ -221,6 +221,10 @@ describe("sync data integrity regressions", () => {
     copy.bibbles[0].position.x = 99;
     expect(original.bibbles[0].position.x).toBe(0);
   });
+  it("does not carry a source graph's revision into a newly migrated map", () => {
+    const versioned = { ...mockMap1, version: 7 };
+    expect(copyMapForMigration(versioned)).not.toHaveProperty("version");
+  });
 
   it("requires persistence confirmation for the intended account", async () => {
     setStoredMapsForScope([mockMap1], null);
