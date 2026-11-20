@@ -5,6 +5,7 @@ import { LogIn, LogOut, UserRoundPlus } from "lucide-react";
 import Link from "next/link";
 
 import { logout } from "@/app/actions/auth";
+import { clearUserScopedStorage } from "@/lib/maps/sync";
 
 type CurrentUser = { id: string; name: string; email: string };
 
@@ -25,7 +26,15 @@ export function AuthControls() {
   if (user) {
     return (
       <form action={logout}>
-        <button type="submit" className="nav-login">
+        <button
+          type="submit"
+          className="nav-login"
+          onClick={() => {
+            if (user?.id) {
+              clearUserScopedStorage(user.id);
+            }
+          }}
+        >
           <LogOut size={15} /> Log out
         </button>
       </form>
