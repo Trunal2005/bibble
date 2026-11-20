@@ -280,6 +280,8 @@ Learning maps remain local to the browser under the `bibble-maps` local-storage 
 
 The UI includes log-in and sign-up flows for authenticated accounts. Keep documentation precise about what works in the current code, especially the distinction between backend-backed accounts and locally stored learning maps.
 
+Local map collections and deleted-map ID lists are validated before hydration. Incompatible values fall back to empty collections, while valid saved maps in a mixed collection remain available. Loading preserves the original stored value, including malformed JSON; a later explicit edit/save writes the validated state.
+
 ---
 
 ## 🎨 Themes

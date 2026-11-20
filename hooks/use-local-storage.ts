@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { normalizeLocalMapData } from "@/lib/maps/local-storage";
 
 export function useLocalStorage<T>(key: string, initialValue: T) {
   const [value, setValue] = useState<T>(initialValue);
@@ -9,15 +10,24 @@ export function useLocalStorage<T>(key: string, initialValue: T) {
 
   useEffect(() => {
     skipWrite.current = true;
+    let valueTimer: number | undefined;
+    let hydrationTimer: number | undefined;
     try {
       const stored = window.localStorage.getItem(key);
-      if (stored) window.setTimeout(() => setValue(JSON.parse(stored) as T), 0);
+      if (stored) {
+        const restored = normalizeLocalMapData(key, JSON.parse(stored)) as T;
+        valueTimer = window.setTimeout(() => setValue(restored), 0);
+      }
     } catch {
-      window.localStorage.removeItem(key);
+      // Preserve unreadable data; loading must not delete a user's saved value.
     } finally {
       // Queued after the setValue timer above, so `hydrated` only turns true once the stored value is in state.
-      window.setTimeout(() => setHydrated(true), 0);
+      hydrationTimer = window.setTimeout(() => setHydrated(true), 0);
     }
+    return () => {
+      window.clearTimeout(valueTimer);
+      window.clearTimeout(hydrationTimer);
+    };
   }, [key]);
 
   useEffect(() => {
