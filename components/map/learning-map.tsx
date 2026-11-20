@@ -31,9 +31,15 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import { ArrowLeft, Star, Trash2 } from "lucide-react";
-import { AnimatePresence } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  annotateNodesWithReadiness,
+  detectCycle,
+  getDirectDependentIds,
+  getDirectPrerequisiteIds,
+} from "@/lib/maps/graph-algorithms";
 
 const nodeTypes = { bibble: BibbleNode };
 
@@ -99,6 +105,7 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [graphNotice, setGraphNotice] = useState<string | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [storedMaps, setStoredMaps, hydrated] = useLocalStorage<LearningMap[]>("bibble-maps", []);
   const flowRef = useRef<ReactFlowInstance<Node<BibbleNodeData>, Edge> | null>(null);
@@ -118,6 +125,25 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
   }, [edges]);
 
   const selected = nodes.find((node) => node.id === selectedId)?.data as BibbleNodeData | undefined;
+
+  const { directPrerequisites, directDependents } = useMemo(() => {
+    if (!selectedId) return { directPrerequisites: [], directDependents: [] };
+    const allBibbles = nodes.map((n) => n.data);
+    const prereqIds = getDirectPrerequisiteIds(selectedId, edges);
+    const depIds = getDirectDependentIds(selectedId, edges);
+    const bibbleMap = new Map(allBibbles.map((b) => [b.id, b]));
+
+    return {
+      directPrerequisites: prereqIds
+        .map((id) => bibbleMap.get(id))
+        .filter((b): b is NonNullable<typeof b> => Boolean(b))
+        .map((b) => ({ id: b.id, title: b.title, status: b.status, progress: b.progress })),
+      directDependents: depIds
+        .map((id) => bibbleMap.get(id))
+        .filter((b): b is NonNullable<typeof b> => Boolean(b))
+        .map((b) => ({ id: b.id, title: b.title, status: b.status, progress: b.progress })),
+    };
+  }, [edges, nodes, selectedId]);
 
   // Load the persisted map once per map id and use it as the clean history baseline.
   useEffect(() => {
@@ -235,6 +261,29 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
 
   const onConnect = useCallback(
     (connection: Connection) => {
+      if (!connection.source || !connection.target) return;
+
+      const cycleResult = detectCycle(
+        nodesRef.current.map((n) => n.data),
+        edgesRef.current,
+        {
+          source: connection.source,
+          target: connection.target,
+        },
+      );
+
+      if (cycleResult.hasCycle) {
+        setGraphNotice(cycleResult.message || "Connecting these concepts creates a circular dependency.");
+        window.setTimeout(() => setGraphNotice(null), 4500);
+        return;
+      }
+
+      if (cycleResult.isDuplicate) {
+        setGraphNotice(cycleResult.message || "These concepts are already connected.");
+        window.setTimeout(() => setGraphNotice(null), 3000);
+        return;
+      }
+
       const nextEdges = addEdge(
         { ...connection, type: "smoothstep", animated: true, style: { stroke: "var(--canvas-edge)", strokeWidth: 2 } },
         edgesRef.current,
@@ -242,9 +291,12 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
       if (nextEdges === edgesRef.current) return;
       edgesRef.current = nextEdges;
       setEdges(nextEdges);
-      recordHistory(nodesRef.current, nextEdges);
+      const reannotatedNodes = annotateNodesWithReadiness(nodesRef.current, nextEdges);
+      nodesRef.current = reannotatedNodes;
+      setNodes(reannotatedNodes);
+      recordHistory(reannotatedNodes, nextEdges);
     },
-    [recordHistory, setEdges],
+    [recordHistory, setEdges, setNodes],
   );
 
   /** Update a single node in React state (immediate UI feedback) and record one committed edit. */
@@ -252,9 +304,10 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
     const nextNodes = nodesRef.current.map((node) =>
       node.id === bibble.id ? { ...node, data: bibble as BibbleNodeData } : node,
     );
-    nodesRef.current = nextNodes;
-    setNodes(nextNodes);
-    recordHistory(nextNodes, edgesRef.current);
+    const reannotatedNodes = annotateNodesWithReadiness(nextNodes, edgesRef.current);
+    nodesRef.current = reannotatedNodes;
+    setNodes(reannotatedNodes);
+    recordHistory(reannotatedNodes, edgesRef.current);
   };
 
   /**
@@ -296,7 +349,16 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
         width: 155,
         height: 96,
         measured: { width: 155, height: 96 },
-        data: { id, title: "New bibble", description: "Give this idea a little shape.", status: "not-started", progress: 0, position: { ...position } } as BibbleNodeData,
+        data: {
+          id,
+          title: "New bibble",
+          description: "Give this idea a little shape.",
+          status: "not-started",
+          progress: 0,
+          position: { ...position },
+          readinessState: "root",
+          missingPrereqsCount: 0,
+        } as BibbleNodeData,
       },
     ];
     nodesRef.current = nextNodes;
@@ -327,16 +389,19 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
       if (!editable) return;
       const nodeIds = new Set(deletedNodes.map((node) => node.id));
       const edgeIds = new Set(deletedEdges.map((edge) => edge.id));
-      const nextNodes = nodesRef.current.filter((node) => !nodeIds.has(node.id));
+      const remainingNodes = nodesRef.current.filter((node) => !nodeIds.has(node.id));
       const nextEdges = edgesRef.current.filter(
         (edge) => !edgeIds.has(edge.id) && !nodeIds.has(edge.source) && !nodeIds.has(edge.target),
       );
+      const nextNodes = annotateNodesWithReadiness(remainingNodes, nextEdges);
       nodesRef.current = nextNodes;
       edgesRef.current = nextEdges;
+      setNodes(nextNodes);
+      setEdges(nextEdges);
       recordHistory(nextNodes, nextEdges);
       setSelectedId((current) => (current && nodeIds.has(current) ? null : current));
     },
-    [editable, recordHistory],
+    [editable, recordHistory, setEdges, setNodes],
   );
 
   const deleteBibble = (id: string) => {
@@ -453,7 +518,32 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
       {!editable && <div className="map-canvas-hint"><Star size={14} /> Click a bibble to explore it</div>}
     </div>
     {saveError && <p role="alert" style={{ margin: "10px 0", color: "var(--danger, #b42318)" }}>{saveError}</p>}
-    <AnimatePresence>{selected && <BibbleDetails key={selected.id} bibble={selected} onClose={() => setSelectedId(null)} onChange={updateSelected} onSave={saveMap} />}</AnimatePresence>
+    <AnimatePresence>
+      {selected && (
+        <BibbleDetails
+          key={selected.id}
+          bibble={selected}
+          onClose={() => setSelectedId(null)}
+          onChange={updateSelected}
+          onSave={saveMap}
+          prerequisites={directPrerequisites}
+          dependents={directDependents}
+          onSelectNode={(id) => setSelectedId(id)}
+        />
+      )}
+    </AnimatePresence>
+    {graphNotice && (
+      <motion.div
+        className="cozy-toast"
+        role="alert"
+        aria-live="assertive"
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0 }}
+      >
+        <Star size={15} /> {graphNotice}
+      </motion.div>
+    )}
     {editable && selected && <button className="delete-bibble" onClick={() => deleteBibble(selected.id)}><Trash2 size={15} /> Delete bibble</button>}
     {editable && showShortcuts && <ShortcutsDialog onClose={closeShortcuts} />}
     {editable && <div className="editor-back-link"><ArrowLeft size={15} /> <span>Changes are kept on this device</span></div>}
