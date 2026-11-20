@@ -89,7 +89,7 @@ describe("atomic Supabase persistence", () => {
     });
 
     it("executes atomic RPC procedure as primary path", async () => {
-      mockSupabase.rpc.mockResolvedValue({ error: null });
+      mockSupabase.rpc.mockResolvedValue({ data: true, error: null });
 
       const success = await saveMapToSupabase(mockMap);
       expect(success).toBe(true);
@@ -100,7 +100,7 @@ describe("atomic Supabase persistence", () => {
       }));
     });
 
-    it("returns false and rolls back if atomic RPC fails with constraint error", async () => {
+    it("does not attempt table writes after an RPC constraint error", async () => {
       mockSupabase.rpc.mockResolvedValue({
         error: { code: "23514", message: "check constraint violation: progress between 0 and 100" },
       });
@@ -111,27 +111,26 @@ describe("atomic Supabase persistence", () => {
       expect(mockSupabase.from).not.toHaveBeenCalled();
     });
 
-    it("falls back to safe differential upsert when RPC is not deployed (PGRST202)", async () => {
+    it("fails closed when the atomic migration is not deployed", async () => {
       mockSupabase.rpc.mockResolvedValue({
         error: { code: "PGRST202", message: "Could not find the function save_learning_map_atomic" },
       });
 
-      const mockQueryBuilder = {
-        upsert: vi.fn().mockResolvedValue({ error: null }),
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockResolvedValue({ data: [] }),
-        }),
-        delete: vi.fn().mockReturnValue({
-          in: vi.fn().mockResolvedValue({ error: null }),
-        }),
-      };
-      mockSupabase.from.mockReturnValue(mockQueryBuilder);
-
       const success = await saveMapToSupabase(mockMap);
-      expect(success).toBe(true);
-      expect(mockSupabase.from).toHaveBeenCalledWith("learning_maps");
-      expect(mockSupabase.from).toHaveBeenCalledWith("map_bibbles");
-      expect(mockSupabase.from).toHaveBeenCalledWith("map_edges");
+      expect(success).toBe(false);
+      expect(mockSupabase.from).not.toHaveBeenCalled();
+    });
+
+    it("requires a positive RPC acknowledgement", async () => {
+      mockSupabase.rpc.mockResolvedValue({ data: false, error: null });
+      expect(await saveMapToSupabase(mockMap)).toBe(false);
+      expect(mockSupabase.from).not.toHaveBeenCalled();
+    });
+
+    it("handles network failures without issuing non-atomic table writes", async () => {
+      mockSupabase.rpc.mockRejectedValue(new Error("Network disconnected"));
+      expect(await saveMapToSupabase(mockMap)).toBe(false);
+      expect(mockSupabase.from).not.toHaveBeenCalled();
     });
   });
 

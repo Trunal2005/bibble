@@ -60,68 +60,15 @@ export async function saveMapToSupabase(map: LearningMap): Promise<boolean> {
     const rows = mapToRows(map);
 
     // Primary path: Execute atomic transactional stored procedure in PostgreSQL
-    const { error: rpcError } = await supabase.rpc("save_learning_map_atomic", {
+    const { data, error: rpcError } = await supabase.rpc("save_learning_map_atomic", {
       p_map: rows.map,
       p_bibbles: rows.bibbles,
       p_edges: rows.edges,
     });
 
-    if (!rpcError) {
-      return true;
-    }
-
-    // Check if error is due to missing RPC function (e.g. migration not applied yet)
-    // PGRST202: PostgREST function not found; 42883: PostgreSQL undefined function
-    const isMissingRpc =
-      rpcError.code === "PGRST202" ||
-      rpcError.code === "42883" ||
-      rpcError.message?.toLowerCase().includes("function") ||
-      rpcError.message?.toLowerCase().includes("not found");
-
-    if (!isMissingRpc) {
-      // Stored procedure executed and failed (e.g., check constraint violation, foreign key).
-      // PostgreSQL rolled back all changes atomically, preserving existing data.
-      return false;
-    }
-
-    // Safe differential fallback when stored procedure is not yet deployed:
-    // 1. Upsert map record
-    const { error: mapError } = await supabase.from("learning_maps").upsert(rows.map);
-    if (mapError) return false;
-
-    // 2. Upsert bibbles before any deletion so existing data is never wiped prematurely
-    if (rows.bibbles.length > 0) {
-      const { error: bibblesError } = await supabase.from("map_bibbles").upsert(rows.bibbles);
-      if (bibblesError) return false;
-    }
-
-    // 3. Upsert edges before any deletion
-    if (rows.edges.length > 0) {
-      const { error: edgesError } = await supabase.from("map_edges").upsert(rows.edges);
-      if (edgesError) return false;
-    }
-
-    // 4. Clean up removed edges (edges currently in DB for this map that are not in incoming set)
-    const incomingEdgeIds = new Set(rows.edges.map((e) => e.id));
-    const { data: existingEdges } = await supabase.from("map_edges").select("id").eq("map_id", map.id);
-    if (existingEdges) {
-      const removedEdgeIds = existingEdges.filter((e) => !incomingEdgeIds.has(e.id)).map((e) => e.id);
-      if (removedEdgeIds.length > 0) {
-        await supabase.from("map_edges").delete().in("id", removedEdgeIds);
-      }
-    }
-
-    // 5. Clean up removed bibbles (bibbles currently in DB for this map that are not in incoming set)
-    const incomingBibbleIds = new Set(rows.bibbles.map((b) => b.id));
-    const { data: existingBibbles } = await supabase.from("map_bibbles").select("id").eq("map_id", map.id);
-    if (existingBibbles) {
-      const removedBibbleIds = existingBibbles.filter((b) => !incomingBibbleIds.has(b.id)).map((b) => b.id);
-      if (removedBibbleIds.length > 0) {
-        await supabase.from("map_bibbles").delete().in("id", removedBibbleIds);
-      }
-    }
-
-    return true;
+    // Fail closed if the migration is absent. Separate REST writes cannot
+    // preserve transaction guarantees; the editor keeps its local recovery copy.
+    return !rpcError && data === true;
   } catch {
     return false;
   }

@@ -17,6 +17,14 @@ as $$
 declare
   v_map_id text;
 begin
+  if auth.uid() is null then
+    raise exception 'Authentication required' using errcode = '42501';
+  end if;
+  if jsonb_typeof(p_map) is distinct from 'object'
+     or jsonb_typeof(p_bibbles) is distinct from 'array'
+     or jsonb_typeof(p_edges) is distinct from 'array' then
+    raise exception 'Map object, bibbles array, and edges array are required' using errcode = '22023';
+  end if;
   v_map_id := p_map->>'id';
 
   if v_map_id is null or char_length(trim(v_map_id)) = 0 then
@@ -93,5 +101,5 @@ begin
 end;
 $$;
 
-revoke all on function public.save_learning_map_atomic(jsonb, jsonb, jsonb) from anon;
+revoke all on function public.save_learning_map_atomic(jsonb, jsonb, jsonb) from public, anon;
 grant execute on function public.save_learning_map_atomic(jsonb, jsonb, jsonb) to authenticated;
