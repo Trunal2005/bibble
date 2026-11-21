@@ -60,20 +60,17 @@ export async function saveMapToSupabase(map: LearningMap, expectedUserId?: strin
     if (!user) return true;
 
     const rows = mapToRows(map);
-    const { error: mapError } = await supabase.from("learning_maps").upsert(rows.map);
-    if (mapError) return false;
-    const { error: bibbleDeleteError } = await supabase.from("map_bibbles").delete().eq("map_id", map.id);
-    const { error: edgeDeleteError } = await supabase.from("map_edges").delete().eq("map_id", map.id);
-    if (bibbleDeleteError || edgeDeleteError) return false;
-    if (rows.bibbles.length) {
-      const { error } = await supabase.from("map_bibbles").insert(rows.bibbles);
-      if (error) return false;
-    }
-    if (rows.edges.length) {
-      const { error } = await supabase.from("map_edges").insert(rows.edges);
-      if (error) return false;
-    }
-    return true;
+
+    // Primary path: Execute atomic transactional stored procedure in PostgreSQL
+    const { data, error: rpcError } = await supabase.rpc("save_learning_map_atomic", {
+      p_map: rows.map,
+      p_bibbles: rows.bibbles,
+      p_edges: rows.edges,
+    });
+
+    // Fail closed if the migration is absent. Separate REST writes cannot
+    // preserve transaction guarantees; the editor keeps its local recovery copy.
+    return !rpcError && data === true;
   } catch {
     return false;
   }
@@ -94,26 +91,85 @@ export async function deleteMapFromSupabase(id: string): Promise<boolean> {
 
 export async function loadMapFromSupabase(id: string): Promise<LearningMap | null> {
   if (!isSupabaseConfigured()) return null;
-  const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-  const { data: map, error } = await supabase.from("learning_maps").select("id,title,description,category,accent,updated_at").eq("id", id).maybeSingle();
-  if (error || !map) return null;
-  const [{ data: bibbles, error: bibblesError }, { data: edges, error: edgesError }] = await Promise.all([
-    supabase.from("map_bibbles").select("id,map_id,title,description,status,progress,position_x,position_y,resources,notes").eq("map_id", id),
-    supabase.from("map_edges").select("id,map_id,source_id,target_id").eq("map_id", id),
-  ]);
-  if (bibblesError || edgesError) return null;
-  return rowsToMap(map, bibbles ?? [], edges ?? []);
+  try {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+
+    // Single joined query for map, bibbles, and edges
+    const { data, error } = await supabase
+      .from("learning_maps")
+      .select("id,title,description,category,accent,updated_at,map_bibbles(id,map_id,title,description,status,progress,position_x,position_y,resources,notes),map_edges(id,map_id,source_id,target_id)")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (!error && data) {
+      return rowsToMap(
+        {
+          id: data.id,
+          title: data.title,
+          description: data.description,
+          category: data.category,
+          accent: data.accent,
+          updated_at: data.updated_at,
+        },
+        (data.map_bibbles as BibbleRow[]) ?? [],
+        (data.map_edges as EdgeRow[]) ?? []
+      );
+    }
+
+    // Fallback to separate queries if joined query fails
+    const { data: map, error: mapError } = await supabase.from("learning_maps").select("id,title,description,category,accent,updated_at").eq("id", id).maybeSingle();
+    if (mapError || !map) return null;
+    const [{ data: bibbles, error: bibblesError }, { data: edges, error: edgesError }] = await Promise.all([
+      supabase.from("map_bibbles").select("id,map_id,title,description,status,progress,position_x,position_y,resources,notes").eq("map_id", id),
+      supabase.from("map_edges").select("id,map_id,source_id,target_id").eq("map_id", id),
+    ]);
+    if (bibblesError || edgesError) return null;
+    return rowsToMap(map, bibbles ?? [], edges ?? []);
+  } catch {
+    return null;
+  }
 }
 
 export async function listMapsFromSupabase(): Promise<LearningMap[]> {
   if (!isSupabaseConfigured()) return [];
-  const supabase = createClient();
-  const { data: maps } = await supabase.from("learning_maps").select("id,title,description,category,accent,updated_at").order("updated_at", { ascending: false });
-  if (!maps) return [];
-  const loaded = await Promise.all(maps.map((map) => loadMapFromSupabase(map.id)));
-  return loaded.filter((map): map is LearningMap => Boolean(map));
+  try {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+
+    // Single query retrieving all user maps along with their nested bibbles and edges
+    const { data, error } = await supabase
+      .from("learning_maps")
+      .select("id,title,description,category,accent,updated_at,map_bibbles(id,map_id,title,description,status,progress,position_x,position_y,resources,notes),map_edges(id,map_id,source_id,target_id)")
+      .order("updated_at", { ascending: false });
+
+    if (!error && Array.isArray(data)) {
+      return data.map((item) =>
+        rowsToMap(
+          {
+            id: item.id,
+            title: item.title,
+            description: item.description,
+            category: item.category,
+            accent: item.accent,
+            updated_at: item.updated_at,
+          },
+          (item.map_bibbles as BibbleRow[]) ?? [],
+          (item.map_edges as EdgeRow[]) ?? []
+        )
+      );
+    }
+
+    // Fallback if joined query fails
+    const { data: maps } = await supabase.from("learning_maps").select("id,title,description,category,accent,updated_at").order("updated_at", { ascending: false });
+    if (!maps) return [];
+    const loaded = await Promise.all(maps.map((map) => loadMapFromSupabase(map.id)));
+    return loaded.filter((map): map is LearningMap => Boolean(map));
+  } catch {
+    return [];
+  }
 }
 
 export async function downloadMapExport(map: LearningMap): Promise<void> {
