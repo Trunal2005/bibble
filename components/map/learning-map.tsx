@@ -5,12 +5,14 @@ import { BibbleNode } from "@/components/bibble/bibble-node";
 import { MapToolbar } from "@/components/map/map-toolbar";
 import { MapHeader } from "@/components/map/map-header";
 import { ShortcutsDialog } from "@/components/map/shortcuts-dialog";
+import { RevisionHistoryDialog } from "@/components/map/revision-history-dialog";
 import { getShortcutAction, isEditableTarget } from "@/lib/map-shortcuts";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
 import { exportMapAsBibbleJson } from "@/lib/maps/export-import";
 import { flowToMap, mapToFlow } from "@/lib/map-utils";
 import { saveMapToSupabase } from "@/lib/maps/persistence";
+import { recordMapRevision } from "@/lib/maps/history";
 import { initialSaveState, saveReducer } from "@/lib/maps/save-status";
 import { getMapProgress } from "@/data/sample-maps";
 import type { Bibble, BibbleNodeData, LearningMap } from "@/types/map";
@@ -100,6 +102,8 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
   const [canRedo, setCanRedo] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [currentRevision, setCurrentRevision] = useState(0);
   const [storedMaps, setStoredMaps, hydrated] = useLocalStorage<LearningMap[]>("bibble-maps", []);
   const flowRef = useRef<ReactFlowInstance<Node<BibbleNodeData>, Edge> | null>(null);
   const historyRef = useRef<EditHistory | null>(null);
@@ -281,6 +285,8 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
     }
     dispatchSave({ type: "save-success", version });
     setJustSaved(true);
+    setCurrentRevision(version + 1);
+    recordMapRevision(next, version + 1, "save").catch(() => {});
     window.setTimeout(() => setJustSaved(false), 1800);
   }, [initialMap, setStoredMaps]);
 
@@ -388,6 +394,16 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
   }, [editable]);
 
   const closeShortcuts = useCallback(() => setShowShortcuts(false), []);
+  const closeHistory = useCallback(() => setShowHistory(false), []);
+  const handleRestored = useCallback((restoredMap: LearningMap, newRevision: number) => {
+    const flow = mapToFlow(restoredMap);
+    setNodes(flow.nodes);
+    setEdges(flow.edges);
+    saveVersionRef.current = newRevision;
+    setCurrentRevision(newRevision);
+    setStoredMaps((current) => [...current.filter((m) => m.id !== restoredMap.id), restoredMap]);
+    dispatchSave({ type: "save-success", version: newRevision });
+  }, [setNodes, setEdges, setStoredMaps]);
 
   const currentMap = flowToMap(initialMap, nodes, edges);
   const progress = getMapProgress(currentMap);
@@ -415,6 +431,7 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
              onFit={fitView}
              onExport={handleExport}
              onSave={() => saveMap()}
+             onShowHistory={() => setShowHistory(true)}
              onShowShortcuts={() => setShowShortcuts(true)}
              saveStatus={saveState.status}
              canUndo={canUndo}
@@ -456,6 +473,15 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
     <AnimatePresence>{selected && <BibbleDetails key={selected.id} bibble={selected} onClose={() => setSelectedId(null)} onChange={updateSelected} onSave={saveMap} />}</AnimatePresence>
     {editable && selected && <button className="delete-bibble" onClick={() => deleteBibble(selected.id)}><Trash2 size={15} /> Delete bibble</button>}
     {editable && showShortcuts && <ShortcutsDialog onClose={closeShortcuts} />}
+    {editable && showHistory && (
+      <RevisionHistoryDialog
+        map={currentMap}
+        currentRevision={currentRevision}
+        isOpen={showHistory}
+        onClose={closeHistory}
+        onRestored={handleRestored}
+      />
+    )}
     {editable && <div className="editor-back-link"><ArrowLeft size={15} /> <span>Changes are kept on this device</span></div>}
   </div>
 </main>
