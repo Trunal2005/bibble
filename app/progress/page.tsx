@@ -58,6 +58,8 @@ export default function ProgressPage() {
   const resetTitleId = useId();
   const durationLabelId = useId();
 
+  const [historyError,setHistoryError]=useState("");
+  const [resetting,setResetting]=useState(false);
   // Form states for manual session log
   const [selectedDuration, setSelectedDuration] = useState<number>(25);
   const [sessionTopic, setSessionTopic] = useState("");
@@ -89,7 +91,8 @@ export default function ProgressPage() {
 
   const handleQuickLog = (e: React.FormEvent) => {
     e.preventDefault();
-    recordSession({
+    setHistoryError("");
+    try {recordSession({
       minutes: selectedDuration,
       topic: sessionTopic.trim() || "Quiet Focus Session",
       note: sessionNote.trim() || undefined,
@@ -98,21 +101,22 @@ export default function ProgressPage() {
     setIsLogModalOpen(false);
     setSessionTopic("");
     setSessionNote("");
+    } catch(error){setHistoryError(error instanceof Error?error.message:"Session could not be saved.");}
   };
 
   const handleDemoSession = () => {
-    recordSession({
+    try {recordSession({
       minutes: 25,
       roomName: "Tea & Warm Light",
       topic: "Focus momentum",
       note: "Gentle first study sprint",
       completedAt: new Date().toISOString(),
-    });
+    });}catch(error){setHistoryError(error instanceof Error?error.message:"Session could not be saved.");}
   };
 
-  const handleConfirmReset = () => {
-    resetStats();
-    setIsResetModalOpen(false);
+  const handleConfirmReset = async () => {
+    if(resetting)return;setResetting(true);setHistoryError("");
+    try{await resetStats();setIsResetModalOpen(false);}catch(error){setHistoryError(error instanceof Error?error.message:"Reset could not be confirmed.");}finally{setResetting(false);}
   };
 
   return (
@@ -120,6 +124,7 @@ export default function ProgressPage() {
       <SiteHeader />
 
       <div className={styles.container}>
+        {historyError&&!isLogModalOpen&&!isResetModalOpen&&<p role="alert">{historyError}</p>}
         {/* Page Hero */}
         <section className={styles.hero}>
           <div className={styles.heroContent}>
@@ -487,6 +492,7 @@ export default function ProgressPage() {
 
             <form onSubmit={handleQuickLog}>
               <div className={styles.modalBody}>
+                {historyError&&<p role="alert">{historyError}</p>}
                 <span id={durationLabelId} className={styles.formLabel}>Choose session length</span>
                 <div className={styles.quickDurations} role="group" aria-labelledby={durationLabelId}>
                   {[15, 25, 45, 60].map((mins) => (
@@ -514,6 +520,7 @@ export default function ProgressPage() {
                     type="text"
                     className={styles.formInput}
                     placeholder="e.g. DSA Practice, Quiet Reading, Tea Table"
+                    maxLength={200}
                     value={sessionTopic}
                     onChange={(e) => setSessionTopic(e.target.value)}
                   />
@@ -528,6 +535,7 @@ export default function ProgressPage() {
                     type="text"
                     className={styles.formInput}
                     placeholder="What did you explore during this time?"
+                    maxLength={2000}
                     value={sessionNote}
                     onChange={(e) => setSessionNote(e.target.value)}
                   />
@@ -575,8 +583,9 @@ export default function ProgressPage() {
             </div>
 
             <div className={styles.modalBody}>
+              {historyError&&<p role="alert">{historyError}</p>}
               <p style={{ margin: "0 0 12px" }}>
-                This will clear your completed focus sessions, daily streak, and total study minutes from this browser.
+                This will clear your completed focus sessions, daily streak, and total study minutes for the current account (or this guest browser). Account history is cleared across devices after confirmation.
               </p>
               <p style={{ margin: 0, fontSize: "13px", color: "var(--muted)" }}>
                 Your saved maps and node progress will remain intact. This action cannot be undone.
@@ -595,6 +604,7 @@ export default function ProgressPage() {
               <button
                 type="button"
                 className={styles.btnDanger}
+                disabled={resetting}
                 onClick={handleConfirmReset}
               >
                 <Trash2 size={15} /> Yes, reset stats
