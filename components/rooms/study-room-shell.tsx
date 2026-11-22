@@ -57,14 +57,15 @@ export function StudyRoomShell({ room }: { room: StudyRoom }) {
     if (loggedRunIdRef.current === runIdRef.current) return;
     loggedRunIdRef.current = runIdRef.current;
 
-    recordFocusSession({
+    try {recordFocusSession({
       minutes,
       roomId: room.id,
       roomName: room.name,
       topic: room.topic,
       completedAt: new Date().toISOString(),
     });
-    triggerToast(`🎉 Completed a ${minutes}-min session in ${room.name}! Logged to My Progress.`);
+    triggerToast(`Completed a ${minutes}-min session. Saved in this browser; account sync retries when connected.`);
+    } catch(error){loggedRunIdRef.current=null;triggerToast(error instanceof Error?error.message:'Session could not be saved. Please log it in My Progress.');}
   }, [room, triggerToast]);
 
   const timerAlerts = useTimerNotifications();

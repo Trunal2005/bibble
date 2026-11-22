@@ -1,3 +1,4 @@
+import {loadActiveFocusSessions,recordActiveFocusSession,resetActiveFocusHistory} from "./focus-sessions";
 import type { DailyStreakInfo, FocusSession, MapProgressItem } from "@/types/progress";
 import type { LearningMap } from "@/types/map";
 import { getMapProgress, sampleMaps } from "@/data/sample-maps";
@@ -146,72 +147,18 @@ export function formatMinutes(totalMinutes: number): { formatted: string; hours:
  * Safely load recorded sessions from localStorage.
  */
 export function loadSessionsFromStorage(): FocusSession[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY_SESSIONS);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed;
-    }
-    return [];
-  } catch (error) {
-    console.error("Failed to load sessions from storage:", error);
-    return [];
-  }
+  return loadActiveFocusSessions();
 }
 
-/**
- * Save sessions array to localStorage.
- */
-export function saveSessionsToStorage(sessions: FocusSession[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(sessions));
-  } catch (error) {
-    console.error("Failed to write sessions to storage:", error);
-  }
-}
-
-/**
- * Record a completed focus session and notify subscribers.
- */
-export function recordFocusSession(
-  input: Omit<FocusSession, "id"> | { minutes: number; roomId?: string; roomName?: string; topic?: string; note?: string; completedAt?: string }
-): FocusSession {
-  const id = `session-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  const session: FocusSession = {
-    id,
-    minutes: Math.max(1, Math.round(input.minutes)),
-    completedAt: input.completedAt || new Date().toISOString(),
-    roomId: input.roomId,
-    roomName: input.roomName,
-    topic: input.topic,
-    note: input.note,
-  };
-
-  const existing = loadSessionsFromStorage();
-  const updated = [session, ...existing];
-  saveSessionsToStorage(updated);
-
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("bibble-focus-session-recorded", { detail: session }));
-  }
-
+export function recordFocusSession(input: { minutes:number; roomId?:string;roomName?:string;topic?:string;note?:string;completedAt?:string;id?:string }): FocusSession {
+  if (!Number.isFinite(input.minutes)) throw new Error("Invalid session duration");
+  const session=recordActiveFocusSession({...input,minutes:Math.max(1,Math.round(input.minutes)),completedAt:input.completedAt??new Date().toISOString()});
+  window.dispatchEvent(new CustomEvent("bibble-focus-session-recorded"));
   return session;
 }
 
-/**
- * Clear all focus session history from browser storage.
- */
-export function clearFocusSessions(): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(STORAGE_KEY_SESSIONS);
-    window.dispatchEvent(new CustomEvent("bibble-stats-reset"));
-  } catch (error) {
-    console.error("Failed to clear focus sessions:", error);
-  }
+export function clearFocusSessions(): Promise<void> {
+  return resetActiveFocusHistory();
 }
 
 /**
