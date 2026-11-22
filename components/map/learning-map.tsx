@@ -5,12 +5,14 @@ import { BibbleNode } from "@/components/bibble/bibble-node";
 import { MapToolbar } from "@/components/map/map-toolbar";
 import { MapHeader } from "@/components/map/map-header";
 import { ShortcutsDialog } from "@/components/map/shortcuts-dialog";
+import { RevisionHistoryDialog } from "@/components/map/revision-history-dialog";
 import { getShortcutAction, isEditableTarget } from "@/lib/map-shortcuts";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
 import { exportMapAsBibbleJson } from "@/lib/maps/export-import";
 import { flowToMap, mapToFlow } from "@/lib/map-utils";
 import { loadLatestMap, saveMapWithVersion } from "@/lib/maps/persistence";
+import { recordMapRevision } from "@/lib/maps/history";
 import { cloneMapForConflict } from "@/lib/maps/concurrency";
 import { MapConflictDialog } from "@/components/map/map-conflict-dialog";
 import { initialSaveState, saveReducer } from "@/lib/maps/save-status";
@@ -119,6 +121,8 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
   const [saveError, setSaveError] = useState<string | null>(null);
   const [graphNotice, setGraphNotice] = useState<string | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [currentRevision, setCurrentRevision] = useState(initialMap.version ?? 0);
   const [storedMaps, setStoredMaps, hydrated] = useLocalStorage<LearningMap[]>("bibble-maps", []);
   const flowRef = useRef<ReactFlowInstance<Node<BibbleNodeData>, Edge> | null>(null);
   const historyRef = useRef<EditHistory | null>(null);
@@ -166,6 +170,7 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
     const savedMap = preferInitialMap ? undefined : storedMaps.find((map) => map.id === initialMap.id);
     const baseline = savedMap ?? initialMap;
     revisionRef.current = baseline.version ?? (savedMap ? 1 : undefined);
+    setCurrentRevision(revisionRef.current ?? 0);
     setMapBase(baseline);
     const flow = savedMap ? mapToFlow(savedMap) : initialFlow;
     const nextNodes = flow.nodes.map(cloneNode);
@@ -348,6 +353,8 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
         return false;
       }
       revisionRef.current = result.map.version;
+      setCurrentRevision(result.map.version ?? 0);
+      if (result.storage === "local") await recordMapRevision(result.map, result.map.version ?? 1, "save");
       setMapBase(result.map);
       if (result.storage === "cloud") {
         try { setStoredMaps((current) => [...current.filter((m) => m.id !== next.id), result.map]); }
@@ -405,6 +412,7 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
       setNodes(flow.nodes);
       setEdges(flow.edges);
       revisionRef.current = latest.version;
+      setCurrentRevision(latest.version ?? 0);
       setMapBase(latest);
       if (editable) historyRef.current = createHistory(flow.nodes, flow.edges);
       setCanUndo(false);
@@ -539,6 +547,26 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
   }, [editable]);
 
   const closeShortcuts = useCallback(() => setShowShortcuts(false), []);
+  const closeHistory = useCallback(() => setShowHistory(false), []);
+  const handleRestored = useCallback((restoredMap: LearningMap, newRevision: number) => {
+    const committed = { ...restoredMap, version: newRevision };
+    const flow = mapToFlow(committed);
+    nodesRef.current = flow.nodes;
+    edgesRef.current = flow.edges;
+    revisionRef.current = newRevision;
+    setMapBase(committed);
+    setNodes(flow.nodes);
+    setEdges(flow.edges);
+    setCurrentRevision(newRevision);
+    historyRef.current = createHistory(flow.nodes, flow.edges);
+    setCanUndo(false);
+    setCanRedo(false);
+    setSelectedId(null);
+    conflictRef.current = false;
+    setConflict(false);
+    setStoredMaps((current) => [...current.filter((m) => m.id !== committed.id), committed]);
+    dispatchSave({ type: "save-success", version: saveVersionRef.current });
+  }, [setNodes, setEdges, setStoredMaps]);
 
   const currentMap = flowToMap(mapBase, nodes, edges);
   const progress = getMapProgress(currentMap);
@@ -567,6 +595,7 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
              onFit={fitView}
              onExport={handleExport}
              onSave={() => saveMap()}
+             onShowHistory={() => setShowHistory(true)}
              onShowShortcuts={() => setShowShortcuts(true)}
              saveStatus={saveState.status}
              canUndo={canUndo}
@@ -633,6 +662,15 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
     )}
     {editable && selected && <button className="delete-bibble" onClick={() => deleteBibble(selected.id)}><Trash2 size={15} /> Delete bibble</button>}
     {editable && showShortcuts && <ShortcutsDialog onClose={closeShortcuts} />}
+    {editable && showHistory && (
+      <RevisionHistoryDialog
+        map={currentMap}
+        currentRevision={currentRevision}
+        isOpen={showHistory}
+        onClose={closeHistory}
+        onRestored={handleRestored}
+      />
+    )}
     {editable && <div className="editor-back-link"><ArrowLeft size={15} /> <span>Changes are kept on this device</span></div>}
   </div>
 </main>

@@ -32,3 +32,11 @@ Browser reproduction without cloud credentials:
 4. Verify each recovery action on a fresh conflict. Reload must show Tab A's work; a copy must keep Tab B's notes; overwrite requires an explicit choice.
 
 The checked-in screenshots show actual browser sessions. Database transcripts show local PostgreSQL checks. Hosted Supabase networking and cross-device login were not exercised without project credentials.
+
+## Compatibility with merged revision history (#150)
+
+Also apply `20261122030000_versioned_history_integration.sql` after the version and snapshot-table migrations. It composes versioned graph writes with immutable snapshot insertion/20-revision retention in the same transaction. Snapshot failure rolls back the graph and version increment. Restore uses a server-owned snapshot and the actual live expected version; it creates a new forward revision with a restore trigger. The UI uses committed version tokens, refreshes canvas refs and undo state after restore, and records guest snapshots only after a successful local compare-and-swap. A matching pair of stale dialog counters cannot authorize a restore.
+
+`supabase/tests/versioned-history.sql` covers atomic snapshot creation/restore, stale restore rejection, snapshot failure rollback, retention and owner/anonymous isolation in an empty disposable database. Client tests also verify actual committed browser state, RPC version acknowledgements and missing-migration failure.
+
+Guest browser verification saved two graph revisions and restored the earlier eight-node graph as a new revision 3, retaining the nine-node revision 2. Evidence: `docs/pr-evidence/142/history-restore.jpg`.
