@@ -1,3 +1,4 @@
+import { saveLocalMapVersioned, ConcurrencyConflictError } from "./concurrency";
 import type { LearningMap } from "@/types/map";
 import type {
   MapDiffSummary,
@@ -392,12 +393,35 @@ export async function restoreMapRevision(params: {
     };
   }
 
-  // Reconstitute restored map with new revision
-  const newRevision = currentRevision + 1;
-  const restoredMap = cloneMap(snapshotDetail.snapshot);
-
-  // Record this restoration as an audited snapshot in history
-  await recordMapRevision(restoredMap, newRevision, "restore");
+  let restoredMap = cloneMap(snapshotDetail.snapshot);
+  let newRevision: number;
+  try {
+    const supabase = isSupabaseConfigured() ? createClient() : null;
+    const auth = supabase ? await supabase.auth.getUser() : null;
+    if (auth?.error && auth.error.name !== "AuthSessionMissingError") throw new Error("Your session could not be verified. Reconnect and retry.");
+    if (supabase && auth?.data.user) {
+      const authoritative = await loadSnapshotFromSupabase(mapId, snapshotId);
+      if (!authoritative) throw new Error("Cloud snapshot could not be verified. No revision was restored.");
+      restoredMap = cloneMap(authoritative.snapshot);
+      const { data, error } = await supabase.rpc("restore_learning_map_versioned", {
+        p_map_id: mapId, p_snapshot_id: snapshotId, p_expected_version: expectedRevision,
+      });
+      if (error?.code === "PT409") throw new ConcurrencyConflictError();
+      if (error || !Number.isSafeInteger(data) || data < 1) throw new Error("Restore could not be committed. Check the history/version migration and retry.");
+      newRevision = data;
+      restoredMap = { ...restoredMap, version: newRevision };
+    } else {
+      const storage = getStorage();
+      if (!storage) throw new Error("Browser storage is unavailable. No revision was restored.");
+      restoredMap = await saveLocalMapVersioned({ ...restoredMap, version: expectedRevision || undefined }, "bibble-maps");
+      newRevision = restoredMap.version!;
+      await recordMapRevision(restoredMap, newRevision, "restore");
+    }
+  } catch (error) {
+    return { success:false, newRevision:currentRevision, restoredMap:null,
+      conflictError:error instanceof ConcurrencyConflictError,
+      errorMessage:error instanceof ConcurrencyConflictError ? "Concurrency conflict: the live map changed. Reload before restoring." : error instanceof Error ? error.message : "Restore failed." };
+  }
 
   return {
     success: true,

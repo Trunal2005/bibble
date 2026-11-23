@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, vi, beforeEach, describe, expect, it } from "vitest";
 import type { LearningMap } from "@/types/map";
 import {
   computeMapDiff,
@@ -70,7 +70,13 @@ const baseMap: LearningMap = {
 describe("Map Revision History Engine", () => {
   beforeEach(() => {
     mockStorage.clear();
+    vi.stubGlobal("window", { localStorage:mockStorage, dispatchEvent:vi.fn() });
+    vi.stubGlobal("navigator", { locks:{request:async (_name:string,fn:()=>unknown)=>fn()} });
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "");
   });
+
+  afterEach(() => {vi.unstubAllGlobals();vi.unstubAllEnvs();});
 
   describe("createSnapshotFromMap", () => {
     it("creates an isolated immutable snapshot with correct metadata", () => {
@@ -198,6 +204,7 @@ describe("Map Revision History Engine", () => {
       // Record v2
       await recordMapRevision(v2Map, 2, "save");
 
+      mockStorage.setItem("bibble-maps", JSON.stringify([{...v2Map,version:2}]));
       // Now restore v1 while on v2
       const result = await restoreMapRevision({
         mapId: baseMap.id,
@@ -215,6 +222,15 @@ describe("Map Revision History Engine", () => {
       expect(history[0].revision).toBe(3);
       expect(history[0].trigger).toBe("restore");
       expect(history[0].title).toBe("Initial Version");
+    });
+
+    it("compares against committed browser state even when dialog tokens match each other", async () => {
+      const snapshot=await recordMapRevision(baseMap,1,"initial");
+      mockStorage.setItem("bibble-maps",JSON.stringify([{...baseMap,version:3,title:"Other tab"}]));
+      const result=await restoreMapRevision({mapId:baseMap.id,snapshotId:snapshot.id,currentRevision:2,expectedRevision:2});
+      expect(result.success).toBe(false);expect(result.conflictError).toBe(true);
+      expect(JSON.parse(mockStorage.getItem("bibble-maps")!)[0].title).toBe("Other tab");
+      expect(loadLocalSnapshots(baseMap.id)).toHaveLength(1);
     });
 
     it("returns error when target snapshot ID does not exist", async () => {
