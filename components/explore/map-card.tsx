@@ -3,17 +3,18 @@
 import { MapPreview } from "@/components/map/map-preview";
 import { getMapProgress } from "@/data/sample-maps";
 import type { LearningMap } from "@/types/map";
+import type { MapSummary } from "@/lib/maps/summaries";
 import { ArrowUpRight, Star, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 
 interface MapCardProps {
-  map: LearningMap;
+  map: LearningMap | MapSummary;
   onDelete: (mapId: string) => void;
 }
 
 export function MapCard({ map, onDelete }: MapCardProps) {
-  const progress = getMapProgress(map);
+  const progress = 'bibbles' in map ? getMapProgress(map) : map.progress;
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
@@ -40,9 +41,9 @@ export function MapCard({ map, onDelete }: MapCardProps) {
     <>
       <article className="map-card">
         <div className="map-card-preview">
-          <MapPreview map={map} compact />
+          {'bibbles' in map ? <MapPreview map={map} compact /> : <div className="empty-state" aria-hidden="true"><Star size={32} /></div>}
           <span className="map-card-count">
-            <Star size={13} /> {map.bibbles.length} bibbles
+            <Star size={13} /> {'bibbles' in map ? map.bibbles.length : map.bibbleCount} bibbles
           </span>
         </div>
         <div className="map-card-body">

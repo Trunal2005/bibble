@@ -1,4 +1,5 @@
 "use client";
+import { FOCUS_CHANGE } from "@/lib/focus-sessions";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DailyStreakInfo, FocusSession, MapProgressItem } from "@/types/progress";
@@ -29,26 +30,21 @@ export function useStudyStats() {
       setHydrated(true);
     }, 0);
 
-    const handleSessionRecorded = (e: Event) => {
-      const customEvent = e as CustomEvent<FocusSession>;
-      if (customEvent.detail) {
-        setSessions((prev) => [customEvent.detail, ...prev.filter((s) => s.id !== customEvent.detail.id)]);
-      } else {
-        setSessions(loadSessionsFromStorage());
-      }
-    };
+    const handleSessionRecorded = () => setSessions(loadSessionsFromStorage());
 
-    const handleReset = () => {
-      setSessions([]);
-    };
+    const handleReset = () => setSessions(loadSessionsFromStorage());
 
     window.addEventListener("bibble-focus-session-recorded", handleSessionRecorded);
     window.addEventListener("bibble-stats-reset", handleReset);
+    window.addEventListener(FOCUS_CHANGE, handleSessionRecorded);
+    window.addEventListener("storage", handleSessionRecorded);
 
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener("bibble-focus-session-recorded", handleSessionRecorded);
       window.removeEventListener("bibble-stats-reset", handleReset);
+      window.removeEventListener(FOCUS_CHANGE, handleSessionRecorded);
+      window.removeEventListener("storage", handleSessionRecorded);
     };
   }, []);
 
@@ -106,8 +102,7 @@ export function useStudyStats() {
   );
 
   const resetStats = useCallback(() => {
-    clearFocusSessions();
-    setSessions([]);
+    return clearFocusSessions();
   }, []);
 
   return {

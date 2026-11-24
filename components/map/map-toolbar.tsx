@@ -1,15 +1,16 @@
 "use client";
 
-import { AlertCircle, Check, Download, Keyboard, Loader2, Plus, Redo2, Save, Undo2, ZoomIn } from "lucide-react";
+import { AlertCircle, Check, Download, History, Keyboard, Loader2, Plus, Redo2, Save, Undo2, ZoomIn } from "lucide-react";
 import { saveStatusLabel, type SaveStatus } from "@/lib/maps/save-status";
 
-export function MapToolbar({ onAdd, onUndo, onRedo, onFit, onExport, onSave, onShowShortcuts, saveStatus, canUndo, canRedo }: {
+export function MapToolbar({ onAdd, onUndo, onRedo, onFit, onExport, onSave, onShowHistory, onShowShortcuts, saveStatus, canUndo, canRedo }: {
   onAdd: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onFit: () => void;
   onExport?: () => void;
   onSave: () => void;
+  onShowHistory?: () => void;
   onShowShortcuts: () => void;
   saveStatus: SaveStatus;
   canUndo: boolean;
@@ -21,6 +22,9 @@ export function MapToolbar({ onAdd, onUndo, onRedo, onFit, onExport, onSave, onS
     <button className="toolbar-button" onClick={onUndo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)"><Undo2 size={16} /></button>
     <button className="toolbar-button" onClick={onRedo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z or Ctrl+Y)"><Redo2 size={16} /></button>
     <button className="toolbar-button toolbar-text-button" onClick={onFit} aria-keyshortcuts="F"><ZoomIn size={16} /> Fit view</button>
+    {onShowHistory && (
+      <button className="toolbar-button toolbar-text-button" onClick={onShowHistory} aria-label="Revision history" title="View map revision history" data-testid="toolbar-history"><History size={16} /> History</button>
+    )}
     {onExport && (
       <button className="toolbar-button toolbar-text-button" onClick={onExport} aria-label="Export map" title="Export map (.bibble.json)"><Download size={16} /> Export map</button>
     )}
@@ -32,6 +36,6 @@ export function MapToolbar({ onAdd, onUndo, onRedo, onFit, onExport, onSave, onS
       {saveStatus === "error" && <AlertCircle size={14} aria-hidden="true" />}
       <span>{saveStatusLabel[saveStatus]}</span>
     </span>
-    <button className="toolbar-save" onClick={onSave} disabled={saveStatus === "saving"} aria-keyshortcuts="Control+S Meta+S"><Save size={16} />{saveStatus === "error" ? "Retry" : "Save"}</button>
+    <button className="toolbar-save" onClick={onSave} disabled={saveStatus === "saving" || saveStatus === "conflict"} aria-keyshortcuts="Control+S Meta+S"><Save size={16} />{saveStatus === "error" ? "Retry" : "Save"}</button>
   </div>;
 }

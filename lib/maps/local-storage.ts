@@ -3,6 +3,7 @@ import { learningMapImportSchema } from "./export-import";
 
 const storedMapSchema = learningMapImportSchema.extend({
   id: z.string().min(1),
+  version: z.number().int().positive().optional(),
   description: z.string(),
   category: z.string(),
   accent: z.string(),

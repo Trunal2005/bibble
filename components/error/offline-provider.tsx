@@ -1,7 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { BibbleError, ErrorType } from "./bibble-error";
+
 
 function subscribeOnlineStatus(callback: () => void) {
   window.addEventListener("online", callback);
@@ -22,23 +22,5 @@ function getServerSnapshot() {
 
 export function OfflineProvider({ children }: { children: React.ReactNode }) {
   const isOnline = useSyncExternalStore(subscribeOnlineStatus, getOnlineSnapshot, getServerSnapshot);
-  const errorType: ErrorType | null = !isOnline ? "offline" : null;
-
-  const handleRetry = () => {
-    if (navigator.onLine) {
-      window.location.reload();
-    }
-  };
-
-  if (errorType) {
-    return (
-      <div className="error-page">
-        <main className="not-found-main">
-          <BibbleError type={errorType} onRetry={handleRetry} />
-        </main>
-      </div>
-    );
-  }
-
-  return <>{children}</>;
+  return <>{!isOnline&&<p role="status">You are offline. Focus sessions can still be saved in this browser; account sync will retry when connected.</p>}{children}</>;
 }
