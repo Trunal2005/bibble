@@ -3,10 +3,13 @@
 import { ThemePicker } from "@/components/ui/theme-picker";
 import { useTheme } from "@/hooks/use-theme";
 import type { LearningMap } from "@/types/map";
-import { ArrowLeft, Check, Pencil, Save, Sparkles } from "lucide-react";
+import { ArrowLeft, Check, GitFork, Pencil, Save, Sparkles } from "lucide-react";
 import { Download } from "lucide-react";
 import { downloadMapExport } from "@/lib/maps/persistence";
+import { forkMap } from "@/lib/maps/cloning";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 interface MapHeaderProps {
   map?: LearningMap;
@@ -32,6 +35,20 @@ export function MapHeader({
   const title = map?.title ?? titleProp ?? "Learning map";
   const category = map?.category ?? categoryProp ?? "";
   const mapId = map?.id ?? mapIdProp ?? "";
+
+  const router = useRouter();
+  const [forking, setForking] = useState(false);
+
+  const handleFork = async () => {
+    if (!map || forking) return;
+    setForking(true);
+    try {
+      const cloned = await forkMap(map);
+      router.push(`/map/${cloned.id}/edit`);
+    } finally {
+      setForking(false);
+    }
+  };
 
   return (
     <header className="map-page-header">
@@ -72,6 +89,19 @@ export function MapHeader({
             aria-label="Download map"
           >
             <Download size={15} /> Download
+          </button>
+        )}
+
+        {map && (
+          <button
+            type="button"
+            className="header-action-btn"
+            onClick={handleFork}
+            disabled={forking}
+            aria-label="Fork roadmap"
+            title="Fork roadmap to your collection"
+          >
+            <GitFork size={15} /> {forking ? "Forking…" : "Fork"}
           </button>
         )}
 

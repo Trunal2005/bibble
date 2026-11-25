@@ -58,6 +58,7 @@ export default function EditMapPage() {
   return (
     <main className="map-page">
       <MapHeader
+        map={map}
         title={map.title}
         category={map.category}
         mapId={map.id}

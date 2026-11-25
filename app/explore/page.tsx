@@ -6,12 +6,15 @@ import { categories } from "@/data/categories";
 import { sampleMaps } from "@/data/sample-maps";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import type { LearningMap } from "@/types/map";
-import { deleteMapFromSupabase } from "@/lib/maps/persistence";
+import { deleteMapFromSupabase, loadMapFromSupabase } from "@/lib/maps/persistence";
+import { forkMap } from "@/lib/maps/cloning";
 import { listMapSummaries, mergeSummaries, summarizeMap, type MapSummary, type SummaryCursor } from "@/lib/maps/summaries";
 import { Search, SlidersHorizontal, Star } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 export default function ExplorePage() {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All maps");
   // Read user-saved/custom maps and the IDs of system maps the user removed.
@@ -88,6 +91,17 @@ export default function ExplorePage() {
     }
   };
 
+  const handleForkMap = async (mapId: string) => {
+    let source: LearningMap | null = allMaps.find((m) => m.id === mapId) ?? null;
+    if (!source) {
+      source = await loadMapFromSupabase(mapId);
+    }
+    if (!source) return;
+    const forked = await forkMap(source);
+    setStoredMaps((prev) => [...prev, forked]);
+    router.push(`/map/${forked.id}/edit`);
+  };
+
   return (
     <main className="app-page">
       <SiteHeader />
@@ -117,6 +131,7 @@ export default function ExplorePage() {
             key={map.id}
             map={remoteMaps.some(remote => remote.id === map.id) ? map : allMaps.find(local => local.id === map.id) ?? map}
             onDelete={handleDeleteMap}
+            onFork={handleForkMap}
           />
         ))}
       </section>

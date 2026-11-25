@@ -42,6 +42,7 @@ export interface LearningMap {
   bibbles: Bibble[];
   edges: MapEdge[];
   accent: string;
+  forkedFrom?: string | null;
 }
 
 export const statusLabels: Record<BibbleStatus, string> = {

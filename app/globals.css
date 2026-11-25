@@ -1729,6 +1729,30 @@ html.dark .preview-window-line {
   outline-offset: 3px;
 }
 
+.map-fork-btn {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+.map-fork-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  transform: translateY(-1px);
+}
+.map-fork-btn:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 3px;
+}
+
 /* Confirmation Dialog */
 .dialog-overlay {
   position: fixed;

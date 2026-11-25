@@ -4,16 +4,17 @@ import { MapPreview } from "@/components/map/map-preview";
 import { getMapProgress } from "@/data/sample-maps";
 import type { LearningMap } from "@/types/map";
 import type { MapSummary } from "@/lib/maps/summaries";
-import { ArrowUpRight, Star, Trash2 } from "lucide-react";
+import { ArrowUpRight, GitFork, Star, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 
 interface MapCardProps {
   map: LearningMap | MapSummary;
   onDelete: (mapId: string) => void;
+  onFork?: (mapId: string) => void;
 }
 
-export function MapCard({ map, onDelete }: MapCardProps) {
+export function MapCard({ map, onDelete, onFork }: MapCardProps) {
   const progress = 'bibbles' in map ? getMapProgress(map) : map.progress;
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -57,6 +58,17 @@ export function MapCard({ map, onDelete }: MapCardProps) {
             <div className="tiny-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress} aria-label={`${map.title} progress`}>
               <span style={{ width: `${Math.min(100, Math.max(0, progress))}%` }} />
             </div>
+            {onFork && (
+              <button
+                type="button"
+                className="map-fork-btn"
+                onClick={() => onFork(map.id)}
+                aria-label={`Fork ${map.title}`}
+                title="Fork roadmap to your collection"
+              >
+                <GitFork size={16} />
+              </button>
+            )}
             <button
               type="button"
               className="map-delete-btn"

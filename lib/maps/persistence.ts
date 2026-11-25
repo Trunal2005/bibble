@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/client";
 import { ConcurrencyConflictError, saveLocalMapVersioned } from "./concurrency";
 import { getMapExportFilename } from "./export-import";
 
-type MapRow = Pick<LearningMap, "id" | "title" | "description" | "category" | "accent" | "version">;
+type MapRow = Pick<LearningMap, "id" | "title" | "description" | "category" | "accent" | "version"> & { forked_from?: string | null };
 type BibbleRow = Omit<Bibble, "position"> & { map_id: string; position_x: number; position_y: number };
 type EdgeRow = Pick<MapEdge, "id"> & { map_id: string; source_id: string; target_id: string };
 
@@ -13,7 +13,15 @@ function isSupabaseConfigured() {
 
 export function mapToRows(map: LearningMap) {
   return {
-    map: { id: map.id, title: map.title, description: map.description, category: map.category, accent: map.accent, ...(map.version !== undefined ? { version: map.version } : {}) },
+    map: {
+      id: map.id,
+      title: map.title,
+      description: map.description,
+      category: map.category,
+      accent: map.accent,
+      ...(map.version !== undefined ? { version: map.version } : {}),
+      ...(map.forkedFrom !== undefined ? { forked_from: map.forkedFrom } : {}),
+    },
     bibbles: map.bibbles.map((bibble) => ({
       id: bibble.id,
       map_id: map.id,
@@ -38,6 +46,7 @@ export function rowsToMap(map: MapRow, bibbles: BibbleRow[], edges: EdgeRow[]): 
     category: map.category,
     accent: map.accent,
     ...(map.version !== undefined ? { version: map.version } : {}),
+    ...(map.forked_from ? { forkedFrom: map.forked_from } : {}),
     bibbles: bibbles.map(({ id, title, description, status, progress, position_x, position_y, resources, notes }) => ({
       id,
       title,
@@ -120,7 +129,7 @@ export async function loadMapFromSupabase(id: string): Promise<LearningMap | nul
     // Fetch the revision and graph together, so the editor never pairs a
     // current version token with nodes from a different committed revision.
     const { data, error } = await supabase.from("learning_maps")
-      .select("id,title,description,category,accent,version,map_bibbles(id,map_id,title,description,status,progress,position_x,position_y,resources,notes),map_edges(id,map_id,source_id,target_id)")
+      .select("id,title,description,category,accent,version,forked_from,map_bibbles(id,map_id,title,description,status,progress,position_x,position_y,resources,notes),map_edges(id,map_id,source_id,target_id)")
       .eq("id", id).maybeSingle();
     if (error || !data) return null;
     return rowsToMap(data, (data.map_bibbles as BibbleRow[]) ?? [], (data.map_edges as EdgeRow[]) ?? []);
@@ -137,7 +146,7 @@ export async function listMapsFromSupabase(): Promise<LearningMap[]> {
     if (!user) return [];
     // Retain #139's single joined query while including #143's revision token.
     const { data, error } = await supabase.from("learning_maps")
-      .select("id,title,description,category,accent,version,map_bibbles(id,map_id,title,description,status,progress,position_x,position_y,resources,notes),map_edges(id,map_id,source_id,target_id)")
+      .select("id,title,description,category,accent,version,forked_from,map_bibbles(id,map_id,title,description,status,progress,position_x,position_y,resources,notes),map_edges(id,map_id,source_id,target_id)")
       .order("updated_at", { ascending: false });
     if (error || !Array.isArray(data)) return [];
     return data.map((row) => rowsToMap(row, (row.map_bibbles as BibbleRow[]) ?? [], (row.map_edges as EdgeRow[]) ?? []));
