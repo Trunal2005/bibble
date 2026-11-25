@@ -4,7 +4,7 @@ import { MapCard } from "@/components/explore/map-card";
 import { SiteHeader } from "@/components/site-header";
 import { categories } from "@/data/categories";
 import { sampleMaps } from "@/data/sample-maps";
-import { useLocalStorage } from "@/hooks/use-local-storage";
+import { useMapSession, useMapStorage } from "@/components/auth/map-session-provider";
 import type { LearningMap } from "@/types/map";
 import { deleteMapFromSupabase } from "@/lib/maps/persistence";
 import { listMapSummaries, mergeSummaries, summarizeMap, type MapSummary, type SummaryCursor } from "@/lib/maps/summaries";
@@ -12,11 +12,12 @@ import { Search, SlidersHorizontal, Star } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 export default function ExplorePage() {
+  const userId = useMapSession();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All maps");
   // Read user-saved/custom maps and the IDs of system maps the user removed.
-  const [storedMaps, setStoredMaps] = useLocalStorage<LearningMap[]>("bibble-maps", []);
-  const [deletedMapIds, setDeletedMapIds] = useLocalStorage<string[]>("bibble-deleted-maps", []);
+  const [storedMaps, setStoredMaps] = useMapStorage<LearningMap[]>("bibble-maps", []);
+  const [deletedMapIds, setDeletedMapIds] = useMapStorage<string[]>("bibble-deleted-maps", []);
   const [remoteMaps, setRemoteMaps] = useState<MapSummary[]>([]);
   const [cursor, setCursor] = useState<SummaryCursor | null>(null);
   const [loading, setLoading] = useState(true);
@@ -96,6 +97,7 @@ export default function ExplorePage() {
           <span className="eyebrow"><Star size={14} /> Small worlds of knowledge</span>
           <h1>Find a map that feels like yours.</h1>
           <p>Browse a few learning worlds made for wandering, connecting, and coming back to.</p>
+          <p>{userId ? "Your account workspace · Private offline maps stay with this account." : "Guest workspace · Your maps are saved on this device and sync when you sign in."}</p>
         </div>
         <div className="explore-stats"><strong>{maps.length}</strong><span>maps loaded<br />to explore</span></div>
       </section>

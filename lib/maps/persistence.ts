@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/client";
 import { ConcurrencyConflictError, saveLocalMapVersioned } from "./concurrency";
 import { getMapExportFilename } from "./export-import";
 
-type MapRow = Pick<LearningMap, "id" | "title" | "description" | "category" | "accent" | "version">;
+type MapRow = Pick<LearningMap, "id" | "title" | "description" | "category" | "accent" | "version"> & { updated_at?: string };
 type BibbleRow = Omit<Bibble, "position"> & { map_id: string; position_x: number; position_y: number };
 type EdgeRow = Pick<MapEdge, "id"> & { map_id: string; source_id: string; target_id: string };
 
@@ -38,6 +38,7 @@ export function rowsToMap(map: MapRow, bibbles: BibbleRow[], edges: EdgeRow[]): 
     category: map.category,
     accent: map.accent,
     ...(map.version !== undefined ? { version: map.version } : {}),
+    ...(map.updated_at ? { updatedAt: map.updated_at } : {}),
     bibbles: bibbles.map(({ id, title, description, status, progress, position_x, position_y, resources, notes }) => ({
       id,
       title,
@@ -57,7 +58,11 @@ export type MapSaveResult =
   | { status: "conflict" }
   | { status: "error"; message: string };
 
-export async function saveMapWithVersion(map: LearningMap, storageKey = "bibble-maps"): Promise<MapSaveResult> {
+export async function saveMapWithVersion(
+  map: LearningMap,
+  storageKey = "bibble-maps",
+  expectedUserId?: string
+): Promise<MapSaveResult> {
   try {
     const supabase = isSupabaseConfigured() ? createClient() : null;
     const auth = supabase ? await supabase.auth.getUser() : null;
@@ -65,6 +70,9 @@ export async function saveMapWithVersion(map: LearningMap, storageKey = "bibble-
       return { status: "error", message: "Your session could not be verified. Your current edits are still in this tab; reconnect and retry." };
     }
     const user = auth?.data.user ?? null;
+    if (expectedUserId && user?.id !== expectedUserId) {
+      return { status: "error", message: "The current authenticated user does not match the intended account." };
+    }
     if (!supabase || !user) return { status: "saved", map: await saveLocalMapVersioned(map, storageKey), storage: "local" };
     const rows = mapToRows(map);
     const { data, error } = await supabase.rpc("save_learning_map_versioned", {
@@ -83,8 +91,9 @@ export async function saveMapWithVersion(map: LearningMap, storageKey = "bibble-
 }
 
 /** Compatibility helper for callers that do not offer conflict resolution. */
-export async function saveMapToSupabase(map: LearningMap): Promise<boolean> {
-  return (await saveMapWithVersion(map)).status === "saved";
+export async function saveMapToSupabase(map: LearningMap, expectedUserId?: string): Promise<boolean> {
+  if (!isSupabaseConfigured()) return !expectedUserId;
+  return (await saveMapWithVersion(map, "bibble-maps", expectedUserId)).status === "saved";
 }
 
 export async function loadLatestMap(id: string, storageKey = "bibble-maps"): Promise<LearningMap | null> {
@@ -120,7 +129,7 @@ export async function loadMapFromSupabase(id: string): Promise<LearningMap | nul
     // Fetch the revision and graph together, so the editor never pairs a
     // current version token with nodes from a different committed revision.
     const { data, error } = await supabase.from("learning_maps")
-      .select("id,title,description,category,accent,version,map_bibbles(id,map_id,title,description,status,progress,position_x,position_y,resources,notes),map_edges(id,map_id,source_id,target_id)")
+      .select("id,title,description,category,accent,version,updated_at,map_bibbles(id,map_id,title,description,status,progress,position_x,position_y,resources,notes),map_edges(id,map_id,source_id,target_id)")
       .eq("id", id).maybeSingle();
     if (error || !data) return null;
     return rowsToMap(data, (data.map_bibbles as BibbleRow[]) ?? [], (data.map_edges as EdgeRow[]) ?? []);
@@ -135,9 +144,9 @@ export async function listMapsFromSupabase(): Promise<LearningMap[]> {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return [];
-    // Retain #139's single joined query while including #143's revision token.
+    // Retain #139's single joined query while including #143's revision token and updatedAt.
     const { data, error } = await supabase.from("learning_maps")
-      .select("id,title,description,category,accent,version,map_bibbles(id,map_id,title,description,status,progress,position_x,position_y,resources,notes),map_edges(id,map_id,source_id,target_id)")
+      .select("id,title,description,category,accent,version,updated_at,map_bibbles(id,map_id,title,description,status,progress,position_x,position_y,resources,notes),map_edges(id,map_id,source_id,target_id)")
       .order("updated_at", { ascending: false });
     if (error || !Array.isArray(data)) return [];
     return data.map((row) => rowsToMap(row, (row.map_bibbles as BibbleRow[]) ?? [], (row.map_edges as EdgeRow[]) ?? []));

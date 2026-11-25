@@ -33,6 +33,7 @@ export interface MapEdge {
 }
 
 export interface LearningMap {
+  updatedAt?: string;
   /** Database revision (absent only for a new/unsaved map). */
   version?: number;
   id: string;

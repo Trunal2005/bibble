@@ -3,7 +3,7 @@
 import { CreateMapForm } from "@/app/create/_components/create-map-form";
 import { CreateMapHeader } from "@/app/create/_components/create-map-header";
 import { CreateMapIntro } from "@/app/create/_components/create-map-intro";
-import { useLocalStorage } from "@/hooks/use-local-storage";
+import { useMapSession, useMapStorage } from "@/components/auth/map-session-provider";
 import {
   createLearningMap,
   type CreateLearningMapInput,
@@ -21,7 +21,8 @@ import styles from "./create-page.module.css";
 
 export default function CreatePage() {
   const router = useRouter();
-  const [storedMaps, setMaps] = useLocalStorage<LearningMap[]>("bibble-maps", []);
+  const userId = useMapSession();
+  const [storedMaps, setMaps] = useMapStorage<LearningMap[]>("bibble-maps", []);
   const [values, setValues] = useState<CreateLearningMapInput>({
     title: "",
     description: "",
@@ -40,7 +41,7 @@ export default function CreatePage() {
     setImportError(null);
     const newMap = createLearningMap(values);
 
-    const result = await saveMapWithVersion(newMap);
+    const result = await saveMapWithVersion(newMap, undefined, userId ?? undefined);
     if (result.status !== "saved") {
       if (result.status === "conflict") {
         setSaveError("A map with this ID already exists. Please try again to create a fresh map.");
@@ -96,7 +97,7 @@ export default function CreatePage() {
     const newMap = createImportedMap(dataValidation.data, existingIds);
 
     // 6. Save and navigate
-    const result = await saveMapWithVersion(newMap);
+    const result = await saveMapWithVersion(newMap, undefined, userId ?? undefined);
     if (result.status !== "saved") {
       if (result.status === "conflict") {
         setSaveError("A map with this ID already exists. Please retry the import to create a fresh map.");

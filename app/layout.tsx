@@ -4,8 +4,9 @@ import { DM_Serif_Display, Nunito, Geist } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { OfflineProvider } from "@/components/error/offline-provider";
-import {FocusHistoryProvider} from '@/components/auth/focus-history-provider';
-import {createServerClient} from '@/lib/supabase/server';
+import { MapSessionProvider } from "@/components/auth/map-session-provider";
+import { FocusHistoryProvider } from "@/components/auth/focus-history-provider";
+import { createServerClient } from "@/lib/supabase/server";
 
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
@@ -26,11 +27,11 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
-  let userId:string|null=null;
-  if(process.env.SUPABASE_URL&&process.env.SUPABASE_PUBLISHABLE_KEY){
-    const {data:{user},error}=await (await createServerClient()).auth.getUser();
-    if(error&&error.name!=='AuthSessionMissingError')throw new Error('Your account could not be verified. Please reconnect and retry.');
-    userId=user?.id??null;
+  let userId: string | null = null;
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_PUBLISHABLE_KEY) {
+    const { data: { user }, error } = await (await createServerClient()).auth.getUser();
+    if (error && error.name !== 'AuthSessionMissingError') throw new Error('Your account could not be verified. Please reconnect and retry.');
+    userId = user?.id ?? null;
   }
   return (
     <html
@@ -57,7 +58,9 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       </head>
       <body className="min-h-full" suppressHydrationWarning>
         <OfflineProvider>
-          <FocusHistoryProvider key={userId??'guest'} userId={userId}>{children}</FocusHistoryProvider>
+          <MapSessionProvider key={userId ?? "guest"} userId={userId}>
+            <FocusHistoryProvider key={userId ?? 'guest'} userId={userId}>{children}</FocusHistoryProvider>
+          </MapSessionProvider>
         </OfflineProvider>
       </body>
     </html>

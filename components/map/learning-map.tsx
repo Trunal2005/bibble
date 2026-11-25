@@ -7,7 +7,7 @@ import { MapHeader } from "@/components/map/map-header";
 import { ShortcutsDialog } from "@/components/map/shortcuts-dialog";
 import { RevisionHistoryDialog } from "@/components/map/revision-history-dialog";
 import { getShortcutAction, isEditableTarget } from "@/lib/map-shortcuts";
-import { useLocalStorage } from "@/hooks/use-local-storage";
+import { useMapSession, useMapStorage } from "@/components/auth/map-session-provider";
 import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
 import { exportMapAsBibbleJson } from "@/lib/maps/export-import";
 import { flowToMap, mapToFlow } from "@/lib/map-utils";
@@ -99,6 +99,7 @@ const createHistory = (nodes: Node<BibbleNodeData>[], edges: Edge[]): EditHistor
 });
 
 export function LearningMapCanvas({ initialMap, editable = false, preferInitialMap = false }: { initialMap: LearningMap; editable?: boolean; preferInitialMap?: boolean }) {
+  const userId = useMapSession();
   const router = useRouter();
   const resolutionRef = useRef(false);
   const [mapBase, setMapBase] = useState(initialMap);
@@ -123,7 +124,7 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [currentRevision, setCurrentRevision] = useState(initialMap.version ?? 0);
-  const [storedMaps, setStoredMaps, hydrated] = useLocalStorage<LearningMap[]>("bibble-maps", []);
+  const [storedMaps, setStoredMaps, hydrated] = useMapStorage<LearningMap[]>("bibble-maps", []);
   const flowRef = useRef<ReactFlowInstance<Node<BibbleNodeData>, Edge> | null>(null);
   const historyRef = useRef<EditHistory | null>(null);
   const loadedMapIdRef = useRef<string | null>(null);
@@ -340,7 +341,7 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
     // Per-tab recovery draft never replaces another tab's shared cache.
     try { window.sessionStorage.setItem(`bibble-map-draft:${next.id}`, JSON.stringify(next)); } catch { /* Canvas remains available if storage is full. */ }
     try {
-      const result = await saveMapWithVersion(next);
+      const result = await saveMapWithVersion(next, undefined, userId ?? undefined);
       if (result.status === "conflict") {
         conflictRef.current = true;
         setConflict(true);
@@ -369,14 +370,14 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
     } finally {
       inFlightRef.current = false;
     }
-  }, [setStoredMaps]);
+  }, [setStoredMaps, userId]);
 
   const saveMap = useCallback(async (updatedBibble?: Bibble) => {
     if (conflictRef.current || inFlightRef.current) return false;
     const currentNodes = updatedBibble
       ? nodesRef.current.map((n) => n.id === updatedBibble.id ? { ...n, data: updatedBibble as BibbleNodeData } : n)
       : nodesRef.current;
-    const next = { ...flowToMap(mapBase, currentNodes, edgesRef.current), version: revisionRef.current };
+    const next = { ...flowToMap(mapBase, currentNodes, edgesRef.current), version: revisionRef.current, updatedAt: new Date().toISOString() };
     return persistSnapshot(next);
   }, [mapBase, persistSnapshot]);
 
@@ -388,7 +389,7 @@ export function LearningMapCanvas({ initialMap, editable = false, preferInitialM
     try {
       const local = { ...flowToMap(mapBase, nodesRef.current, edgesRef.current), version: revisionRef.current };
       if (action === "copy") {
-        const result = await saveMapWithVersion(cloneMapForConflict(local));
+        const result = await saveMapWithVersion(cloneMapForConflict(local), undefined, userId ?? undefined);
         if (result.status !== "saved") throw new Error("Could not save a copy. Your current changes are still here.");
         if (result.storage === "cloud") {
           try { setStoredMaps((current) => [...current, result.map]); }

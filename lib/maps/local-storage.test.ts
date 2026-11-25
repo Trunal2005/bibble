@@ -8,6 +8,7 @@ describe("map storage hydration", () => {
     expect(normalizeLocalMapData("bibble-maps:account-a", [map, { ...map, version: "3" }])).toEqual([map]);
     expect(normalizeLocalMapData("bibble-maps:guest", [map, { ...map, version: 0 }])).toEqual([map]);
     expect(normalizeLocalMapData("bibble-deleted-maps:account-a", ["map-a", null])).toEqual(["map-a"]);
+    expect(normalizeLocalMapData("bibble-deleted-maps:guest", ["map-a", null])).toEqual(["map-a"]);
   });
   it("keeps every valid sample map and its saved values intact", () => {
     const maps = structuredClone(sampleMaps);

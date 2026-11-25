@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
-import {revalidatePath} from 'next/cache';
+import { revalidatePath } from "next/cache";
 
 import {
   loginSchema,
@@ -59,7 +59,7 @@ export async function signup(
     return { message: "Account created. Check your email to confirm your address before logging in." };
   }
 
-  revalidatePath('/', 'layout');
+  revalidatePath("/", "layout");
   redirect("/");
 }
 
@@ -84,14 +84,14 @@ export async function login(
     return { message: "Invalid email or password." };
   }
 
-  revalidatePath('/', 'layout');
+  revalidatePath("/", "layout");
   redirect("/");
 }
 
 export async function logout() {
   const supabase = await createServerClient();
-  const {error}=await supabase.auth.signOut();
-  if(error)throw new Error('Logout could not be confirmed. Please retry.');
-  revalidatePath('/', 'layout');
+  const { error } = await supabase.auth.signOut();
+  if (error) throw new Error("Could not log out. Please try again.");
+  revalidatePath("/", "layout");
   redirect("/login");
 }
