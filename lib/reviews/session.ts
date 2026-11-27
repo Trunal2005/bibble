@@ -1,5 +1,4 @@
 import type { DueReviewItem, ReviewRating } from "@/types/review";
-import { calculateNextReview } from "./scheduler";
 
 export type SessionState = "idle" | "prompt" | "revealed" | "finished";
 
