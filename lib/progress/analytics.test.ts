@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   computeAggregateMetrics,
   filterDeletedMaps,
@@ -15,9 +15,7 @@ function createMockMap(id: string, title: string, progress: number, completedCou
     category: "Architecture",
     status: i < completedCount ? ("completed" as const) : ("not-started" as const),
     progress: i < completedCount ? 100 : 0,
-    difficulty: "medium" as const,
-    estimatedMinutes: 30,
-    order: i + 1,
+    position: { x: 0, y: i * 100 },
   }));
 
   return {
@@ -25,11 +23,9 @@ function createMockMap(id: string, title: string, progress: number, completedCou
     title,
     description: "Map description",
     category: "Architecture",
-    accent: "#6366f1",
+    accent: "lavender",
     bibbles,
-    connections: [],
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
+    edges: [],
   };
 }
 
@@ -49,7 +45,9 @@ describe("Progress Analytics Engine (Issue #157)", () => {
         {
           id: "map-1",
           title: "Frontend Roadmap",
+          description: "Frontend tracks",
           category: "Web Dev",
+          accent: "lavender",
           progress: 100,
           totalBibbles: 10,
           completedBibbles: 10,
@@ -60,7 +58,9 @@ describe("Progress Analytics Engine (Issue #157)", () => {
         {
           id: "map-2",
           title: "Backend Roadmap",
+          description: "Backend tracks",
           category: "Web Dev",
+          accent: "lavender",
           progress: 50,
           totalBibbles: 10,
           completedBibbles: 5,
@@ -71,7 +71,9 @@ describe("Progress Analytics Engine (Issue #157)", () => {
         {
           id: "map-3",
           title: "AI Engineering",
+          description: "AI tracks",
           category: "AI",
+          accent: "lavender",
           progress: 0,
           totalBibbles: 8,
           completedBibbles: 0,

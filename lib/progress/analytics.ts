@@ -1,6 +1,6 @@
 import type { LearningMap } from "@/types/map";
 import type { MapProgressItem } from "@/types/progress";
-import { getMapProgress, sampleMaps } from "@/data/sample-maps";
+import { sampleMaps } from "@/data/sample-maps";
 import { computeMapProgressItems } from "../progress";
 
 export interface AggregateProgressMetrics {
